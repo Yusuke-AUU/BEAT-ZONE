@@ -249,9 +249,9 @@ const Game = (() => {
     document.querySelector('#btn-1 .btn-key').textContent = 'SNARE';
     document.querySelector('#btn-2 .btn-key').textContent = 'HH';
 
-    noteSpeed = { easy: 160, normal: 280, hard: 420 }[currentDiff];
+    noteSpeed = { easy: 180, normal: 300, hard: 440 }[currentDiff];
     judgeWindow = {
-      easy:   { perfect: 0.30, good: 0.55 },
+      easy:   { perfect: 0.25, good: 0.45 },
       normal: { perfect: 0.12, good: 0.22 },
       hard:   { perfect: 0.07, good: 0.13 }
     }[currentDiff];
