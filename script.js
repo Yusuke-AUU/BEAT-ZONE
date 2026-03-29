@@ -1,15 +1,35 @@
-// ===== BEAT ZONE v4 =====
-// 3 lanes = melody notes (Low / Mid / High)
-// Drums + Bass always play as background
-// Player presses buttons to "perform" the melody
+// ===== BEAT ZONE v5 =====
+// 10 songs: Classic×2, JPOP×2, Western Pop×2, Club×2, R&B×2
+// 3 lanes = LOW / MID / HIGH melody
+// Background: drums + bass + pads always playing
 
 // ===== NOTE FREQUENCIES =====
 const N = {
-  C2:65.41, G2:98, A2:110, Bb2:116.54, B2:123.47,
-  C3:130.81, D3:146.83, Eb3:155.56, E3:164.81, F3:174.61, Gb3:185, G3:196, Ab3:207.65, A3:220, Bb3:233.08, B3:246.94,
-  C4:261.63, D4:293.66, Eb4:311.13, E4:329.63, F4:349.23, Gb4:369.99, G4:392, Ab4:415.30, A4:440, Bb4:466.16, B4:493.88,
-  C5:523.25, D5:587.33, Eb5:622.25, E5:659.25, F5:698.46, Gb5:739.99, G5:783.99, Ab5:830.61, A5:880, Bb5:932.33, B5:987.77, C6:1046.5
+  C2:65.41,D2:73.42,E2:82.41,F2:87.31,G2:98,A2:110,Bb2:116.54,B2:123.47,
+  C3:130.81,D3:146.83,Eb3:155.56,E3:164.81,F3:174.61,Gb3:185,G3:196,Ab3:207.65,A3:220,Bb3:233.08,B3:246.94,
+  C4:261.63,D4:293.66,Eb4:311.13,E4:329.63,F4:349.23,Gb4:369.99,G4:392,Ab4:415.30,A4:440,Bb4:466.16,B4:493.88,
+  C5:523.25,D5:587.33,Eb5:622.25,E5:659.25,F5:698.46,Gb5:739.99,G5:783.99,Ab5:830.61,A5:880,Bb5:932.33,B5:987.77,
+  C6:1046.5,D6:1174.66,E6:1318.51
 };
+
+// Lane note helper: ln(0=LOW, 1=MID, 2=HIGH, freq)
+function ln(lane, freq) { return { lane, freq }; }
+
+// ===== MELODY LOOP HELPER =====
+// Loops mel pattern to fill song duration, with explicit lane assignments
+function buildChart(mel, startTime, stepTime, duration) {
+  const patDur = mel.length * stepTime;
+  const reps = Math.ceil((duration - startTime + 2) / patDur) + 1;
+  const notes = [];
+  for (let r = 0; r < reps; r++) {
+    mel.forEach((item, i) => {
+      const t = startTime + r * patDur + i * stepTime;
+      if (t > duration + 0.5) return;
+      notes.push({ time: t, lane: item.lane, freq: item.freq });
+    });
+  }
+  return notes;
+}
 
 // ===== AUDIO ENGINE =====
 const AudioEngine = (() => {
@@ -25,632 +45,541 @@ const AudioEngine = (() => {
   function resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
   function now() { return ctx ? ctx.currentTime : 0; }
 
-  // ── basic sound builders ──
-  function osc(type, freq, t, dur, vol, dest) {
+  function osc(type, freq, t, dur, vol) {
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = type; o.frequency.value = freq;
-    o.connect(g); g.connect(dest || master);
+    o.connect(g); g.connect(master);
     g.gain.setValueAtTime(0.001, t);
     g.gain.linearRampToValueAtTime(vol, t + 0.015);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.start(t); o.stop(t + dur + 0.05);
-    bgNodes.push(o, g); return g;
+    bgNodes.push(o, g);
   }
 
-  function noiseNode(t, dur, vol, hpf, lpf) {
-    const len = Math.ceil(ctx.sampleRate * Math.max(dur, 0.05));
+  function noiseN(t, dur, vol, hpf, lpf) {
+    const len = Math.ceil(ctx.sampleRate * Math.max(dur, 0.02));
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     const src = ctx.createBufferSource(); src.buffer = buf;
     const g = ctx.createGain();
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = hpf || 0;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = lpf || 20000;
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value = hpf||0;
+    const lp = ctx.createBiquadFilter(); lp.type='lowpass';  lp.frequency.value = lpf||20000;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
     src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(master);
-    src.start(t); src.stop(t + dur + 0.02);
-    bgNodes.push(src, g, hp, lp);
+    src.start(t); src.stop(t+dur+0.02);
+    bgNodes.push(src,g,hp,lp);
   }
 
-  // ── Background drum kit ──
   function kick(t, vol) {
-    vol = vol || 0.75;
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(0.001, t + 0.45);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.5);
-    bgNodes.push(o, g);
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(0.001,t+0.4);
+    g.gain.setValueAtTime(vol||0.7,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t+0.45);
+    bgNodes.push(o,g);
   }
   function snare(t, vol) {
-    vol = vol || 0.22;
-    noiseNode(t, 0.15, vol, 1000, 8000);
-    osc('triangle', 185, t, 0.1, vol * 0.6);
+    noiseN(t,0.15,vol||0.22,1500,8000);
+    osc('triangle',200,t,0.1,(vol||0.22)*0.5);
   }
-  function hat(t, vol, open) {
-    noiseNode(t, open ? 0.22 : 0.035, vol || 0.08, 8000, 18000);
-  }
+  function hat(t, vol, open) { noiseN(t,open?0.2:0.03,vol||0.07,8000,18000); }
   function clap(t, vol) {
-    for (let i = 0; i < 3; i++) noiseNode(t + i * 0.012, 0.08, vol || 0.18, 2000, 12000);
+    for(let i=0;i<3;i++) noiseN(t+i*0.01,0.06,vol||0.18,2000,10000);
   }
-
-  // ── Background bass ──
   function bassNote(freq, t, dur, vol) {
-    vol = vol || 0.38;
-    osc('sine', freq, t, dur, vol * 0.7);
-    osc('sawtooth', freq, t, dur * 0.6, vol * 0.2);
+    osc('sine',freq,t,dur,vol||0.35);
+    osc('sawtooth',freq,t,dur*0.5,(vol||0.35)*0.15);
   }
-
-  // ── Background pad ──
   function pad(freqs, t, dur, vol, type) {
-    type = type || 'sine';
-    freqs.forEach(f => osc(type, f, t, dur, vol || 0.05));
+    (freqs||[]).forEach(f=>osc(type||'sine',f,t,dur,vol||0.05));
   }
 
-  // ── Player melody hit sounds ──
-  // instrument: 'piano' | 'keys' | 'synth' | 'strings' | 'lead'
-  function hitMelody(freq, instrument) {
+  // ── Player hit sounds by instrument type ──
+  function hitNote(freq, instrument) {
     if (!ctx) return; resume();
     const t = ctx.currentTime;
-    switch (instrument) {
+    switch(instrument) {
       case 'piano':
-        osc('triangle', freq, t, 0.6, 0.32);
-        osc('sine', freq * 2, t, 0.25, 0.14);
-        osc('sine', freq * 3, t, 0.12, 0.06);
-        break;
-      case 'keys':
-        osc('triangle', freq, t, 0.5, 0.28);
-        osc('sawtooth', freq, t, 0.15, 0.10);
-        osc('sine', freq * 2, t, 0.3, 0.10);
+        osc('triangle',freq,t,0.7,0.30);
+        osc('sine',freq*2,t,0.3,0.12);
+        osc('sine',freq*3,t,0.15,0.05);
         break;
       case 'strings':
-        osc('sawtooth', freq, t, 0.7, 0.18);
-        osc('sawtooth', freq * 1.007, t, 0.7, 0.14);
-        osc('sine', freq * 0.5, t, 0.5, 0.08);
-        break;
-      case 'lead':
-        osc('sawtooth', freq, t, 0.4, 0.22);
-        osc('sawtooth', freq * 1.004, t, 0.4, 0.18);
-        osc('square', freq * 0.5, t, 0.3, 0.08);
+        osc('sawtooth',freq,t,0.8,0.18);
+        osc('sawtooth',freq*1.008,t,0.8,0.14);
+        osc('sine',freq*0.5,t,0.5,0.07);
         break;
       case 'synth':
+        osc('sawtooth',freq,t,0.4,0.22);
+        osc('sawtooth',freq*1.004,t,0.4,0.18);
+        osc('square',freq*0.5,t,0.25,0.06);
+        break;
+      case 'bell':
+        osc('sine',freq,t,1.2,0.28);
+        osc('sine',freq*4.01,t,0.4,0.08);
+        osc('sine',freq*6.7,t,0.2,0.04);
+        break;
+      case 'electric':
+        osc('sawtooth',freq,t,0.35,0.20);
+        osc('sine',freq,t,0.35,0.15);
+        osc('sine',freq*2,t,0.2,0.08);
+        break;
       default:
-        osc('sawtooth', freq, t, 0.35, 0.20);
-        osc('sine', freq, t, 0.35, 0.12);
-        osc('sine', freq * 2, t, 0.2, 0.06);
+        osc('triangle',freq,t,0.5,0.25);
+        osc('sine',freq*2,t,0.25,0.10);
     }
   }
 
   function hitMiss() {
     if (!ctx) return; resume();
-    noiseNode(ctx.currentTime, 0.07, 0.06, 0, 2000);
+    noiseN(ctx.currentTime,0.06,0.05,0,1500);
   }
 
-  // ── Full background music for a song ──
-  function playBackground(song, startT, duration) {
-    if (!ctx) return;
-    const beat = 60 / song.bpm;
-    const bars = Math.ceil(duration / (beat * 4)) + 2;
-    song.bgDef(ctx, master, bgNodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc);
+  function playBG(song, startT, dur) {
+    if (!ctx||!song.bgFn) return;
+    const beat = 60/song.bpm;
+    const bars = Math.ceil(dur/(beat*4))+2;
+    song.bgFn(ctx,master,bgNodes,startT,bars,beat,
+              kick,snare,hat,clap,bassNote,pad,osc,noiseN);
   }
 
   function stopAll() {
-    bgNodes.forEach(n => { try { n.stop ? n.stop() : n.disconnect(); } catch(e){} });
-    bgNodes = [];
+    bgNodes.forEach(n=>{try{n.stop?n.stop():n.disconnect();}catch(e){}});
+    bgNodes=[];
   }
 
-  return { init, resume, now, hitMelody, hitMiss, playBackground, stopAll };
+  return {init,resume,now,hitNote,hitMiss,playBG,stopAll};
 })();
 
-// ===== MELODY → 3 LANES HELPER =====
-// melNotes: array where each entry is { lane:0|1|2, freq } or just a freq number (auto-assigned)
-// Explicit lane assignment ensures all 3 lanes always appear
-// Loops the pattern to fill the full song duration
-function melodyToLanes(melNotes, startTime, stepTime, duration) {
-  duration = duration || 34;
-  const patternDur = melNotes.length * stepTime;
-  const reps = Math.ceil((duration - startTime + 1) / patternDur) + 1;
-  const notes = [];
-  for (let rep = 0; rep < reps; rep++) {
-    melNotes.forEach((item, i) => {
-      const t = startTime + rep * patternDur + i * stepTime;
-      if (t > duration + 0.5) return;
-      const freq  = typeof item === 'object' ? item.freq  : item;
-      const lane  = typeof item === 'object' ? item.lane  : (i % 3);
-      notes.push({ time: t, lane, freq });
-    });
-  }
-  return notes;
-}
-
-// Shorthand builders: each note is [lane, freq]
-function ln(lane, freq) { return { lane, freq }; }
-
-// ===== SONG DEFINITIONS =====
-// Each note in chart: { time, lane (0=low,1=mid,2=high), freq, instrument }
-// bgDef: function that schedules all background (drums + bass + pads)
+// ===== SONGS =====
+// Each song: { name, genre, icon, bpm, duration, diff, instrument, mel[], stepTime, bgFn() }
 
 const SONGS = [
 
-  // ─── 0: MOONLIGHT SONATA (Beethoven) ───
+  // ════════════════════════════════════════════
+  // 0. CLASSIC — Beethoven: Für Elise (著作権切れ)
+  // ════════════════════════════════════════════
   {
-    id:0, name:'MOONLIGHT SONATA', genre:'classic', icon:'🌙',
-    bpm:108, duration:32, desc:'クラシック / Beethoven',
-    diff:{easy:2, normal:4, hard:7},
-    instrument: 'piano',
+    id:0, name:'FÜR ELISE', genre:'classic', icon:'🎹',
+    bpm:116, duration:30, desc:'クラシック / Beethoven',
+    diff:{easy:2,normal:4,hard:7}, instrument:'piano',
 
-    // Full melody chart (Hard = all notes)
-    buildMelody() {
-      const b = 60/108, tri = b/3;
-      // Beethoven Moonlight Sonata Op.27 No.2 - triplet arpeggios Cis minor
-      // Each triplet: ln(0)=bass, ln(1)=middle, ln(2)=top
-      const mel = [
-        ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),   ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),
-        ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),   ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),
-        ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),   ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),
-        ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),   ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),
-        ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),   ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),
-        ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),   ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),
-        ln(0,N.E3), ln(1,N.B3), ln(2,N.Ab4),  ln(0,N.E3), ln(1,N.B3), ln(2,N.Ab4),
-        ln(0,N.E3), ln(1,N.Eb4),ln(2,N.Ab4),  ln(0,N.E3), ln(1,N.Eb4),ln(2,N.Ab4),
-      ];
-      return melodyToLanes(mel, b*2, tri, 33);
-    },
+    mel: [
+      // A section: E5-D#5-E5-D#5-E5-B4-D5-C5-A4
+      ln(2,N.E5), ln(2,N.Eb5),ln(2,N.E5), ln(2,N.Eb5),
+      ln(2,N.E5), ln(1,N.B4), ln(1,N.D5), ln(1,N.C5),
+      ln(0,N.A4), ln(0,N.A4), ln(1,N.C4), ln(1,N.E4),
+      ln(1,N.A4), ln(0,N.A4), ln(0,N.B4), ln(0,N.E4),
+      // B section
+      ln(2,N.E5), ln(2,N.Eb5),ln(2,N.E5), ln(2,N.Eb5),
+      ln(2,N.E5), ln(1,N.B4), ln(1,N.D5), ln(1,N.C5),
+      ln(0,N.A4), ln(0,N.A4), ln(1,N.C4), ln(1,N.E4),
+      ln(1,N.A4), ln(0,N.G4), ln(0,N.F4), ln(0,N.E4),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const tri = beat / 3;
-      const bassLine = [N.A2, N.A2, N.G2, N.G2, N.F3, N.F3, N.E3, N.E3];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        // Soft kick on 1 & 3
-        kick(t, 0.3); kick(t + beat*2, 0.22);
-        // Soft snare on 2 & 4
-        snare(t + beat, 0.12); snare(t + beat*3, 0.12);
-        // Bass sustain
-        bassNote(bassLine[i % bassLine.length], t, beat * 4 * 0.9, 0.28);
-        // Triplet pad arpeggios (gentle)
-        const ch = [[N.A3,N.C4,N.E4],[N.G3,N.B3,N.D4],[N.F3,N.A3,N.C4],[N.E3,N.Ab3,N.B3]];
-        const thisCh = ch[i % 4];
-        for (let rep = 0; rep < 4; rep++) {
-          thisCh.forEach((f, fi) => {
-            const at = t + rep * beat + fi * tri;
-            const o = ctx.createOscillator(), g = ctx.createGain();
-            o.type = 'sine'; o.frequency.value = f;
-            o.connect(g); g.connect(master);
-            g.gain.setValueAtTime(0.04, at); g.gain.exponentialRampToValueAtTime(0.001, at + tri * 2.8);
-            o.start(at); o.stop(at + tri * 3); nodes.push(o, g);
-          });
-        }
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.A2,N.A2,N.E3,N.E3,N.F3,N.F3,N.E3,N.E3];
+      const ch=[[N.A3,N.C4,N.E4],[N.E3,N.G3,N.B3],[N.F3,N.A3,N.C4],[N.E3,N.Ab3,N.B3]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.28); kick(t+beat*2,0.20);
+        snare(t+beat,0.10); snare(t+beat*3,0.10);
+        bassNote(bl[i%8],t,beat*4*0.9,0.28);
+        pad(ch[i%4],t,beat*4,0.05,'sine');
+        // Waltz-feel hat
+        for(let k=0;k<6;k++) hat(t+k*beat*0.67,0.06);
       }
     }
   },
 
-  // ─── 1: CANON IN D (Pachelbel) ───
+  // ════════════════════════════════════════════
+  // 1. CLASSIC — Bach: Minuet in G (著作権切れ)
+  // ════════════════════════════════════════════
   {
-    id:1, name:'CANON IN D', genre:'classic', icon:'🎼',
-    bpm:116, duration:32, desc:'クラシック / Pachelbel',
-    diff:{easy:2, normal:5, hard:8},
-    instrument: 'strings',
+    id:1, name:'MINUET IN G', genre:'classic', icon:'🎻',
+    bpm:132, duration:30, desc:'クラシック / Bach/Petzold',
+    diff:{easy:2,normal:5,hard:8}, instrument:'strings',
 
-    buildMelody() {
-      const b = 60/116;
-      // Pachelbel Canon D major - 3 voice counterpoint
-      const mel = [
-        ln(0,N.D4),  ln(1,N.Gb4), ln(2,N.A4),   ln(0,N.A3),  ln(1,N.E4),  ln(2,N.A4),
-        ln(0,N.B3),  ln(1,N.D4),  ln(2,N.Gb4),  ln(0,N.Gb3), ln(1,N.A3),  ln(2,N.D4),
-        ln(0,N.G3),  ln(1,N.B3),  ln(2,N.D4),   ln(0,N.D3),  ln(1,N.Gb3), ln(2,N.A3),
-        ln(0,N.G3),  ln(1,N.B3),  ln(2,N.D4),   ln(0,N.A3),  ln(1,N.E4),  ln(2,N.A4),
-        ln(0,N.D4),  ln(2,N.Gb4), ln(0,N.A4),   ln(2,N.B4),  ln(1,N.A4),  ln(2,N.Gb4),
-        ln(0,N.E4),  ln(2,N.Gb4), ln(1,N.A4),   ln(2,N.B4),  ln(1,N.D5),  ln(2,N.E5),
-        ln(0,N.D5),  ln(1,N.C5),  ln(2,N.B4),   ln(1,N.A4),  ln(0,N.Gb4), ln(1,N.A4),
-        ln(0,N.B4),  ln(1,N.D5),  ln(2,N.Gb5),  ln(1,N.E5),  ln(0,N.D5),  ln(1,N.B4),
-      ];
-      return melodyToLanes(mel, b*2, b*0.5, 33);
-    },
+    mel: [
+      // Minuet in G - D4 G4 A4 B4 C5 D5
+      ln(0,N.D4), ln(2,N.G4), ln(2,N.A4), ln(2,N.B4),
+      ln(2,N.C5), ln(2,N.D5), ln(2,N.B4), ln(2,N.G4),
+      ln(1,N.E4), ln(1,N.C5), ln(1,N.D5), ln(1,N.C5),
+      ln(0,N.B3), ln(2,N.G4), ln(1,N.A4), ln(2,N.B4),
+      ln(2,N.C5), ln(2,N.B4), ln(2,N.A4), ln(2,N.G4),
+      ln(1,N.D5), ln(1,N.D4), ln(0,N.D4), ln(0,N.D4),
+      ln(0,N.E4), ln(1,N.Gb4),ln(0,N.G4), ln(1,N.A4),
+      ln(2,N.B4), ln(1,N.G4), ln(0,N.G4), ln(0,N.G4),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.D3,N.A2,N.B2,N.Gb2,N.G2,N.D3,N.G2,N.A2];
-      const chords   = [[N.D4,N.Gb4,N.A4],[N.A3,N.C4,N.E4],[N.B3,N.D4,N.Gb4],[N.Gb3,N.A3,N.C4],
-                        [N.G3,N.B3,N.D4], [N.D4,N.Gb4,N.A4],[N.G3,N.B3,N.D4],[N.A3,N.C4,N.E4]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t, 0.35); kick(t + beat*2, 0.28);
-        snare(t + beat, 0.15); snare(t + beat*3, 0.15);
-        for (let k = 0; k < 8; k++) hat(t + k * beat * 0.5, 0.07);
-        bassNote(bassLine[(i*2)%8], t, beat*2*0.9, 0.32);
-        bassNote(bassLine[(i*2+1)%8], t+beat*2, beat*2*0.9, 0.32);
-        pad(chords[i%8], t, beat*4, 0.05, 'triangle');
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.G2,N.G2,N.D3,N.D3,N.E3,N.E3,N.C3,N.D3];
+      const ch=[[N.G3,N.B3,N.D4],[N.D3,N.Gb3,N.A3],[N.C3,N.E3,N.G3],[N.D3,N.Gb3,N.A3]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.30); kick(t+beat*2,0.22);
+        snare(t+beat,0.11); snare(t+beat*3,0.11);
+        bassNote(bl[i%8],t,beat*4*0.9,0.30);
+        pad(ch[i%4],t,beat*4,0.055,'triangle');
+        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.05);
       }
     }
   },
 
-  // ─── 2: AIR ON G STRING (Bach) ───
+  // ════════════════════════════════════════════
+  // 2. J-POP — 川の流れのように (美空ひばり 著作権切れに近い有名曲インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:2, name:'AIR ON G STRING', genre:'classic', icon:'🎻',
-    bpm:72, duration:32, desc:'クラシック / Bach',
-    diff:{easy:1, normal:3, hard:6},
-    instrument: 'strings',
+    id:2, name:'RIVER FLOW', genre:'jpop', icon:'🌸',
+    bpm:84, duration:30, desc:'J-POP / Japanese Ballad',
+    diff:{easy:1,normal:3,hard:6}, instrument:'bell',
 
-    buildMelody() {
-      const b = 60/72;
-      // Bach Air on G String - slow, lyrical, D major
-      const mel = [
-        ln(2,N.B4),  ln(1,N.A4),  ln(2,N.Gb4), ln(1,N.E4),
-        ln(0,N.D4),  ln(1,N.E4),  ln(2,N.Gb4), ln(2,N.A4),
-        ln(2,N.B4),  ln(2,N.C5),  ln(2,N.B4),  ln(1,N.A4),
-        ln(1,N.G4),  ln(1,N.Gb4), ln(0,N.E4),  ln(0,N.D4),
-        ln(2,N.C5),  ln(2,N.B4),  ln(1,N.A4),  ln(1,N.G4),
-        ln(1,N.Gb4), ln(1,N.G4),  ln(2,N.A4),  ln(2,N.B4),
-        ln(2,N.E5),  ln(2,N.D5),  ln(2,N.C5),  ln(2,N.B4),
-        ln(1,N.A4),  ln(1,N.B4),  ln(2,N.C5),  ln(2,N.D5),
-      ];
-      return melodyToLanes(mel, b*3, b*0.5, 33);
-    },
+    mel: [
+      // Pentatonic ballad feel - C major pentatonic
+      ln(0,N.C4), ln(1,N.E4), ln(2,N.G4), ln(2,N.A4),
+      ln(2,N.G4), ln(1,N.E4), ln(1,N.D4), ln(0,N.C4),
+      ln(0,N.E4), ln(1,N.G4), ln(2,N.A4), ln(2,N.C5),
+      ln(2,N.A4), ln(1,N.G4), ln(0,N.E4), ln(0,N.D4),
+      ln(1,N.E4), ln(2,N.G4), ln(2,N.A4), ln(2,N.G4),
+      ln(1,N.E4), ln(0,N.D4), ln(0,N.C4), ln(0,N.D4),
+      ln(1,N.E4), ln(1,N.G4), ln(2,N.A4), ln(2,N.C5),
+      ln(2,N.D5), ln(2,N.C5), ln(1,N.A4), ln(0,N.G4),
+    ],
+    stepFn(b){ return b; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.D2||N.D3,N.C3,N.B2,N.A2,N.G2,N.Gb2,N.E2||N.E3,N.A2];
-      const chords   = [[N.D3,N.Gb3,N.A3],[N.C3,N.E3,N.G3],[N.B2,N.D3,N.Gb3],[N.A2,N.E3,N.A3],
-                        [N.G2,N.B2,N.D3], [N.Gb2,N.A2,N.C3],[N.E2||N.E3,N.A2,N.C3],[N.A2,N.C3,N.E3]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t, 0.28); kick(t + beat*2, 0.20);
-        snare(t + beat, 0.10); snare(t + beat*3, 0.10);
-        bassNote(bassLine[i%8], t, beat*4*0.95, 0.30);
-        pad(chords[i%8], t, beat*4, 0.055, 'sine');
-        // Gentle counter melody (violas)
-        const cm = [N.Gb4, N.E4, N.D4, N.C4][i%4];
-        const o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = 'sawtooth'; o.frequency.value = cm;
-        const lp = ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=800;
-        o.connect(lp); lp.connect(g); g.connect(master);
-        g.gain.setValueAtTime(0.0, t); g.gain.linearRampToValueAtTime(0.06, t+beat);
-        g.gain.setValueAtTime(0.06, t+beat*3); g.gain.exponentialRampToValueAtTime(0.001, t+beat*4);
-        o.start(t); o.stop(t+beat*4+0.1); nodes.push(o,lp,g);
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.C3,N.C3,N.F3,N.F3,N.G3,N.G3,N.C3,N.C3];
+      const ch=[[N.C4,N.E4,N.G4],[N.F3,N.A3,N.C4],[N.G3,N.B3,N.D4],[N.C4,N.E4,N.G4]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.30); kick(t+beat*2,0.22);
+        snare(t+beat,0.12); snare(t+beat*3,0.12);
+        bassNote(bl[i%8],t,beat*4,0.30);
+        pad(ch[i%4],t,beat*4,0.06,'sine');
+        // Gentle 8th hats
+        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.05);
       }
     }
   },
 
-  // ─── 3: TOCCATA & FUGUE (Bach) ───
+  // ════════════════════════════════════════════
+  // 3. J-POP — 勝手にシンドバッド スタイル (サザンオールスターズ インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:3, name:'TOCCATA RUSH', genre:'classic', icon:'⚡',
-    bpm:132, duration:30, desc:'クラシック / Bach Toccata',
-    diff:{easy:4, normal:7, hard:10},
-    instrument: 'strings',
+    id:3, name:'SHINDABAD GROOVE', genre:'jpop', icon:'🎤',
+    bpm:138, duration:30, desc:'J-POP / City Pop',
+    diff:{easy:2,normal:5,hard:8}, instrument:'electric',
 
-    buildMelody() {
-      const b = 60/132;
-      // Bach Toccata & Fugue D minor - dramatic descending motif
-      const mel = [
-        ln(2,N.D5),  ln(2,N.C5),  ln(2,N.D5),  ln(2,N.Eb5),
-        ln(2,N.D5),  ln(1,N.C5),  ln(1,N.Bb4), ln(0,N.A4),
-        ln(0,N.Bb4), ln(1,N.C5),  ln(1,N.Bb4), ln(1,N.A4),
-        ln(0,N.G4),  ln(0,N.Gb4), ln(0,N.G4),  ln(0,N.A4),
-        ln(2,N.D5),  ln(2,N.Eb5), ln(2,N.D5),  ln(2,N.C5),
-        ln(1,N.Bb4), ln(1,N.A4),  ln(1,N.Bb4), ln(2,N.C5),
-        ln(2,N.D5),  ln(2,N.F5),  ln(2,N.E5),  ln(2,N.D5),
-        ln(1,N.C5),  ln(0,N.Bb4), ln(0,N.A4),  ln(0,N.G4),
-      ];
-      return melodyToLanes(mel, b*1.5, b*0.5, 31);
-    },
+    mel: [
+      // City pop - bright, major, syncopated
+      ln(0,N.G4), ln(1,N.A4), ln(2,N.B4), ln(2,N.D5),
+      ln(2,N.E5), ln(2,N.D5), ln(1,N.B4), ln(1,N.A4),
+      ln(0,N.G4), ln(0,N.A4), ln(1,N.B4), ln(2,N.E5),
+      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5), ln(0,N.B4),
+      ln(1,N.A4), ln(2,N.B4), ln(2,N.D5), ln(2,N.E5),
+      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5), ln(1,N.B4),
+      ln(0,N.A4), ln(0,N.G4), ln(1,N.A4), ln(2,N.B4),
+      ln(2,N.D5), ln(2,N.E5), ln(2,N.Gb5),ln(2,N.G5),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.D2||N.D3,N.A2,N.D3,N.A2,N.G2,N.D3,N.G2,N.D2||N.D3];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        // Driving 8th kicks
-        for (let k = 0; k < 4; k++) kick(t + k*beat, k===0?0.7:0.5);
-        snare(t + beat, 0.2); snare(t + beat*3, 0.2);
-        for (let k = 0; k < 8; k++) hat(t + k*beat*0.5, 0.09);
-        for (let k = 0; k < 4; k++) bassNote(bassLine[(i*4+k)%8], t+k*beat, beat*0.9, 0.35);
-        pad([N.D3,N.A3,N.D4], t, beat*4, 0.04, 'sawtooth');
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.G2,N.G2,N.E3,N.E3,N.A2,N.A2,N.D3,N.D3];
+      const ch=[[N.G3,N.B3,N.D4],[N.E3,N.Ab3,N.B3],[N.A3,N.C4,N.E4],[N.D3,N.Gb3,N.A3]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.60); kick(t+beat*2,0.50);
+        snare(t+beat,0.22); snare(t+beat*3,0.22);
+        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%4===0?0.10:0.06);
+        bassNote(bl[i%8],t,beat*2*0.9,0.35);
+        bassNote(bl[(i+1)%8],t+beat*2,beat*2*0.9,0.35);
+        pad(ch[i%4],t,beat*4,0.05,'sawtooth');
       }
     }
   },
 
-  // ─── 4: FIFTH SYMPHONY (Beethoven) ───
+  // ════════════════════════════════════════════
+  // 4. WESTERN POP — ボヘミアン・ラプソディ スタイル (Queen インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:4, name:'FIFTH SYMPHONY', genre:'classic', icon:'🎹',
-    bpm:126, duration:30, desc:'クラシック / Beethoven',
-    diff:{easy:3, normal:6, hard:9},
-    instrument: 'strings',
+    id:4, name:'BOHEMIAN NIGHTS', genre:'western', icon:'🎸',
+    bpm:72, duration:30, desc:'洋楽 / Rock Ballad',
+    diff:{easy:2,normal:4,hard:7}, instrument:'strings',
 
-    buildMelody() {
-      const b = 60/126;
-      // Beethoven 5th Symphony C minor - da-da-da-DUM across 3 lanes
-      const mel = [
-        ln(1,N.G4),  ln(1,N.G4),  ln(1,N.G4),  ln(0,N.Eb4),
-        ln(1,N.F4),  ln(1,N.F4),  ln(1,N.F4),  ln(0,N.D4),
-        ln(2,N.Eb4), ln(2,N.Eb4), ln(2,N.Eb4), ln(0,N.C4),
-        ln(2,N.G4),  ln(2,N.G4),  ln(2,N.G4),  ln(0,N.Eb4),
-        ln(2,N.Ab4), ln(2,N.Ab4), ln(2,N.Ab4), ln(0,N.F4),
-        ln(1,N.G4),  ln(2,N.Ab4), ln(2,N.G4),  ln(2,N.F4),
-        ln(2,N.Eb4), ln(1,N.F4),  ln(2,N.G4),  ln(2,N.Ab4),
-        ln(2,N.Bb4), ln(2,N.C5),  ln(2,N.Bb4), ln(2,N.Ab4),
-      ];
-      return melodyToLanes(mel, b*2, b*0.5, 31);
-    },
+    mel: [
+      // Bb major - operatic feel
+      ln(0,N.Bb4),ln(0,N.Bb4),ln(1,N.Bb4),ln(2,N.C5),
+      ln(2,N.D5), ln(2,N.Eb5),ln(2,N.D5), ln(1,N.C5),
+      ln(1,N.Bb4),ln(0,N.A4), ln(0,N.Bb4),ln(0,N.A4),
+      ln(0,N.G4), ln(1,N.F4), ln(0,N.G4), ln(1,N.F4),
+      ln(2,N.Eb5),ln(2,N.Eb5),ln(2,N.D5), ln(2,N.Eb5),
+      ln(2,N.F5), ln(2,N.Eb5),ln(2,N.D5), ln(1,N.C5),
+      ln(1,N.Bb4),ln(1,N.A4), ln(1,N.Bb4),ln(2,N.C5),
+      ln(2,N.D5), ln(2,N.Eb5),ln(2,N.F5), ln(2,N.G5),
+    ],
+    stepFn(b){ return b; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.C3,N.G2,N.Eb3,N.Bb2, N.C3,N.G2,N.F3,N.G2];
-      const chords   = [[N.C3,N.Eb3,N.G3],[N.G2,N.B2,N.D3],[N.F3,N.A3,N.C4],[N.Eb3,N.G3,N.Bb3]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t, 0.6); kick(t+beat*2, 0.5); kick(t+beat*2.5, 0.4);
-        snare(t+beat, 0.22); snare(t+beat*3, 0.22);
-        for (let k=0;k<8;k++) hat(t+k*beat*0.5, 0.08);
-        bassNote(bassLine[(i*2)%8], t, beat*2*0.9, 0.35);
-        bassNote(bassLine[(i*2+1)%8], t+beat*2, beat*2*0.9, 0.35);
-        pad(chords[i%4], t, beat*4, 0.055, 'sawtooth');
-        // Timpani accent
-        const oT=ctx.createOscillator(),gT=ctx.createGain();
-        oT.frequency.setValueAtTime(70,t);oT.frequency.exponentialRampToValueAtTime(35,t+0.4);
-        gT.gain.setValueAtTime(0.2,t);gT.gain.exponentialRampToValueAtTime(0.001,t+0.45);
-        oT.connect(gT);gT.connect(master);oT.start(t);oT.stop(t+0.5);nodes.push(oT,gT);
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.Bb2,N.Bb2,N.F3,N.F3,N.Eb3,N.Eb3,N.Bb2,N.F2||N.F3];
+      const ch=[[N.Bb3,N.D4,N.F4],[N.F3,N.A3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Bb3,N.D4,N.F4]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.35); kick(t+beat*2,0.28);
+        snare(t+beat,0.18); snare(t+beat*3,0.18);
+        bassNote(bl[i%8],t,beat*4,0.32);
+        pad(ch[i%4],t,beat*4,0.06,'sine');
+        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.07);
+        // Clap on 2&4
+        clap(t+beat,0.15); clap(t+beat*3,0.15);
       }
     }
   },
 
-  // ─── 5: BLUE MONDAY (New Order style) ───
+  // ════════════════════════════════════════════
+  // 5. WESTERN POP — Shape of You スタイル (Ed Sheeran インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:5, name:'BLUE MONDAY WAVE', genre:'club', icon:'🌆',
-    bpm:130, duration:30, desc:'クラブ / Synth-Pop',
-    diff:{easy:2, normal:4, hard:7},
-    instrument: 'synth',
+    id:5, name:'SHAPE OF NOW', genre:'western', icon:'🎵',
+    bpm:96, duration:30, desc:'洋楽 / Pop',
+    diff:{easy:2,normal:4,hard:7}, instrument:'electric',
 
-    buildMelody() {
-      const b = 60/130;
-      // New Order Blue Monday - F minor synth melody
-      const mel = [
-        ln(0,N.F4),  ln(1,N.Ab4), ln(2,N.Bb4), ln(2,N.C5),
-        ln(2,N.Bb4), ln(1,N.Ab4), ln(0,N.F4),  ln(0,N.Eb4),
-        ln(0,N.F4),  ln(1,N.Ab4), ln(2,N.Bb4), ln(2,N.C5),
-        ln(2,N.Eb5), ln(2,N.C5),  ln(1,N.Bb4), ln(0,N.Ab4),
-        ln(0,N.F4),  ln(0,N.Eb4), ln(0,N.F4),  ln(1,N.Ab4),
-        ln(1,N.Bb4), ln(2,N.C5),  ln(2,N.Bb4), ln(1,N.Ab4),
-        ln(0,N.G4),  ln(1,N.Ab4), ln(1,N.Bb4), ln(2,N.C5),
-        ln(2,N.F5),  ln(2,N.Eb5), ln(2,N.C5),  ln(2,N.Bb4),
-      ];
-      return melodyToLanes(mel, b*2, b*0.5, 31);
-    },
+    mel: [
+      // C# minor pentatonic hook
+      ln(0,N.E4), ln(0,N.Ab4),ln(1,N.B4), ln(2,N.E5),
+      ln(2,N.E5), ln(2,N.Ab5),ln(2,N.Gb5),ln(2,N.E5),
+      ln(1,N.E5), ln(1,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),
+      ln(2,N.Ab5),ln(2,N.Gb5),ln(1,N.E5), ln(0,N.E5),
+      ln(0,N.E4), ln(1,N.Ab4),ln(2,N.B4), ln(2,N.E5),
+      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.B4), ln(1,N.Ab4),
+      ln(1,N.Gb4),ln(0,N.E4), ln(0,N.Ab4),ln(1,N.B4),
+      ln(2,N.E5), ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.E5),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.F3,N.F3,N.Ab2,N.F3, N.Eb3,N.F3,N.Ab2,N.Bb2];
-      const chords   = [[N.F3,N.Ab3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Db3||N.D3,N.F3,N.Ab3],[N.Eb3,N.G3,N.Bb3]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        // Electronic drums
-        kick(t,0.65); kick(t+beat*0.75,0.45); kick(t+beat*2,0.65); kick(t+beat*2.75,0.45);
-        snare(t+beat,0.25); snare(t+beat*3,0.25);
-        for (let k=0;k<16;k++) hat(t+k*beat*0.25, k%4===0?0.10:0.06);
-        for (let k=0;k<8;k++) bassNote(bassLine[k%8], t+k*beat*0.5, beat*0.45, 0.35);
-        // Synth pad with filter sweep
-        chords[i%4].forEach(f => {
-          const o=ctx.createOscillator(),g=ctx.createGain();
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';
-          lp.frequency.setValueAtTime(400,t); lp.frequency.linearRampToValueAtTime(1800,t+beat*2);
-          lp.frequency.linearRampToValueAtTime(400,t+beat*4);
-          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.06,t);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
-          o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
-        });
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.E3,N.E3,N.A2,N.A2,N.B2,N.B2,N.Ab2,N.Ab2];
+      const ch=[[N.E4,N.Ab4,N.B4],[N.A3,N.C4,N.E4],[N.B3,N.D4,N.Gb4],[N.Ab3,N.C4,N.Eb4]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.65); kick(t+beat*2,0.55);
+        snare(t+beat,0.22); snare(t+beat*3,0.22);
+        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.09:0.05);
+        bassNote(bl[i%8],t,beat*2*0.9,0.38);
+        bassNote(bl[(i+1)%8],t+beat*2,beat*2*0.9,0.38);
+        pad(ch[i%4],t,beat*4,0.05,'sawtooth');
       }
     }
   },
 
-  // ─── 6: AROUND THE GRID (Daft Punk style) ───
+  // ════════════════════════════════════════════
+  // 6. CLUB — Around the World スタイル (Daft Punk インスパイア)
+  // ════════════════════════════════════════════
   {
     id:6, name:'AROUND THE GRID', genre:'club', icon:'🤖',
     bpm:121, duration:30, desc:'クラブ / French House',
-    diff:{easy:2, normal:4, hard:7},
-    instrument: 'lead',
+    diff:{easy:2,normal:4,hard:7}, instrument:'synth',
 
-    buildMelody() {
-      const b = 60/121;
-      // Daft Punk Around the World - A minor repeating hook
-      const mel = [
-        ln(0,N.A4),  ln(0,N.A4),  ln(1,N.A4),  ln(0,N.G4),
-        ln(0,N.A4),  ln(1,N.A4),  ln(2,N.E5),  ln(1,N.A4),
-        ln(0,N.A4),  ln(0,N.A4),  ln(1,N.A4),  ln(0,N.G4),
-        ln(1,N.A4),  ln(2,N.C5),  ln(2,N.E5),  ln(2,N.A5),
-        ln(2,N.G5),  ln(2,N.E5),  ln(1,N.C5),  ln(1,N.A4),
-        ln(0,N.G4),  ln(0,N.E4),  ln(1,N.A4),  ln(0,N.G4),
-        ln(0,N.E4),  ln(0,N.D4),  ln(0,N.E4),  ln(1,N.G4),
-        ln(1,N.A4),  ln(2,N.C5),  ln(2,N.E5),  ln(2,N.A5),
-      ];
-      return melodyToLanes(mel, b*2, b*0.5, 31);
-    },
+    mel: [
+      // A minor repeating hook - ascending then descending
+      ln(0,N.A4), ln(0,N.A4), ln(1,N.A4), ln(0,N.G4),
+      ln(0,N.A4), ln(1,N.A4), ln(2,N.E5), ln(1,N.A4),
+      ln(0,N.A4), ln(0,N.A4), ln(1,N.C5), ln(2,N.E5),
+      ln(2,N.A5), ln(2,N.G5), ln(1,N.E5), ln(1,N.C5),
+      ln(1,N.A4), ln(0,N.G4), ln(0,N.E4), ln(0,N.A4),
+      ln(0,N.G4), ln(0,N.E4), ln(0,N.D4), ln(0,N.E4),
+      ln(1,N.G4), ln(1,N.A4), ln(2,N.C5), ln(2,N.E5),
+      ln(2,N.A5), ln(2,N.G5), ln(2,N.E5), ln(2,N.A5),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.A2,N.A2,N.A2,N.G2,N.A2,N.A2,N.E2||N.G2,N.A2];
-      const chords   = [[N.A3,N.C4,N.E4],[N.G3,N.B3,N.D4],[N.F3,N.A3,N.C4],[N.E3,N.G3,N.B3]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t,0.7); kick(t+beat*0.5,0.5); kick(t+beat,0.55); kick(t+beat*1.5,0.45);
-        kick(t+beat*2,0.7); kick(t+beat*2.5,0.5); kick(t+beat*3,0.55); kick(t+beat*3.5,0.45);
-        clap(t+beat,0.25); clap(t+beat*3,0.25);
-        for (let k=0;k<16;k++) hat(t+k*beat*0.25, k%2===0?0.10:0.06);
-        for (let k=0;k<8;k++) bassNote(bassLine[k%8], t+k*beat*0.5, beat*0.45, 0.38);
-        // Staccato chord stabs
-        chords[i%4].forEach(f => {
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.A2,N.A2,N.A2,N.G2,N.A2,N.A2,N.E2||N.G2,N.A2];
+      const ch=[[N.A3,N.C4,N.E4],[N.G3,N.B3,N.D4],[N.F3,N.A3,N.C4],[N.E3,N.G3,N.B3]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        // 4-on-floor + syncopation
+        kick(t,0.70); kick(t+beat*0.5,0.45); kick(t+beat,0.55); kick(t+beat*1.5,0.40);
+        kick(t+beat*2,0.70); kick(t+beat*2.5,0.45); kick(t+beat*3,0.55); kick(t+beat*3.5,0.40);
+        clap(t+beat,0.22); clap(t+beat*3,0.22);
+        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.10:0.05);
+        for(let k=0;k<8;k++) bassNote(bl[k%8],t+k*beat*0.5,beat*0.45,0.38);
+        // Staccato stabs
+        ch[i%4].forEach(f=>{
           const o=ctx.createOscillator(),g=ctx.createGain();
           const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=1400;
           o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          [0, beat*2].forEach(dt => {
-            g.gain.setValueAtTime(0.07, t+dt); g.gain.exponentialRampToValueAtTime(0.001, t+dt+0.18);
+          [0,beat*2].forEach(dt=>{
+            g.gain.setValueAtTime(0.07,t+dt);g.gain.exponentialRampToValueAtTime(0.001,t+dt+0.15);
           });
-          o.start(t); o.stop(t+beat*4+0.1); nodes.push(o,lp,g);
-        });
-      }
-    }
-  },
-
-  // ─── 7: ONE MORE DRIVE (Daft Punk style) ───
-  {
-    id:7, name:'ONE MORE DRIVE', genre:'club', icon:'✨',
-    bpm:123, duration:30, desc:'クラブ / Disco House',
-    diff:{easy:2, normal:5, hard:8},
-    instrument: 'lead',
-
-    buildMelody() {
-      const b = 60/123;
-      // Daft Punk One More Time - D major disco melody
-      const mel = [
-        ln(2,N.D5),  ln(2,N.E5),  ln(2,N.G5),  ln(2,N.A5),
-        ln(2,N.G5),  ln(1,N.E5),  ln(1,N.D5),  ln(1,N.C5),
-        ln(1,N.B4),  ln(0,N.A4),  ln(0,N.G4),  ln(0,N.A4),
-        ln(1,N.B4),  ln(1,N.D5),  ln(2,N.E5),  ln(2,N.G5),
-        ln(2,N.A5),  ln(2,N.G5),  ln(2,N.E5),  ln(1,N.D5),
-        ln(1,N.C5),  ln(1,N.B4),  ln(0,N.A4),  ln(0,N.G4),
-        ln(0,N.A4),  ln(1,N.B4),  ln(1,N.D5),  ln(2,N.E5),
-        ln(2,N.G5),  ln(2,N.A5),  ln(2,N.G5),  ln(2,N.E5),
-      ];
-      return melodyToLanes(mel, b*2, b*0.5, 31);
-    },
-
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.D3,N.D3,N.A2,N.D3,N.G2,N.D3,N.A2,N.Bb2];
-      const chords   = [[N.D4,N.Gb3||N.G3,N.A3],[N.G3,N.B3,N.D4],[N.A3,N.C4,N.E4],[N.Bb3,N.D4,N.F4]];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t,0.7); kick(t+beat,0.6); kick(t+beat*2,0.7); kick(t+beat*3,0.6);
-        snare(t+beat*0.5,0.20); snare(t+beat*1.5,0.20); snare(t+beat*2.5,0.20); snare(t+beat*3.5,0.20);
-        for (let k=0;k<16;k++) hat(t+k*beat*0.25, k%2===0?0.09:0.05);
-        for (let k=0;k<8;k++) bassNote(bassLine[k%8], t+k*beat*0.5, beat*0.48, 0.38);
-        chords[i%4].forEach(f => {
-          const o=ctx.createOscillator(),g=ctx.createGain();
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=1600;
-          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.07,t);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
           o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
         });
       }
     }
   },
 
-  // ─── 8: ACID DROPS ───
+  // ════════════════════════════════════════════
+  // 7. CLUB — Blue Monday スタイル (New Order インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:8, name:'ACID DROPS', genre:'club', icon:'🎛',
-    bpm:138, duration:30, desc:'クラブ / Acid House',
-    diff:{easy:3, normal:5, hard:8},
-    instrument: 'synth',
+    id:7, name:'BLUE MONDAY WAVE', genre:'club', icon:'🌆',
+    bpm:130, duration:30, desc:'クラブ / Synth-Pop',
+    diff:{easy:2,normal:4,hard:7}, instrument:'synth',
 
-    buildMelody() {
-      const b = 60/138;
-      // Acid House - C minor pentatonic stabs, syncopated
-      const mel = [
-        ln(0,N.C5),  ln(0,N.C5),  ln(1,N.Eb5), ln(0,N.C5),
-        ln(0,N.Bb4), ln(1,N.C5),  ln(0,N.G4),  ln(1,N.C5),
-        ln(2,N.G5),  ln(2,N.Eb5), ln(2,N.G5),  ln(2,N.Bb5),
-        ln(2,N.G5),  ln(1,N.Eb5), ln(1,N.C5),  ln(0,N.Bb4),
-        ln(0,N.Ab4), ln(0,N.Bb4), ln(1,N.C5),  ln(1,N.Eb5),
-        ln(2,N.G5),  ln(2,N.Eb5), ln(1,N.C5),  ln(0,N.Ab4),
-        ln(2,N.Bb5), ln(2,N.G5),  ln(2,N.Eb5), ln(1,N.C5),
-        ln(0,N.Bb4), ln(0,N.G4),  ln(0,N.Eb4), ln(0,N.C4),
-      ];
-      return melodyToLanes(mel, b*1, b*0.5, 31);
-    },
+    mel: [
+      // F minor synth lead
+      ln(0,N.F4), ln(1,N.Ab4),ln(2,N.Bb4),ln(2,N.C5),
+      ln(2,N.Bb4),ln(1,N.Ab4),ln(0,N.F4), ln(0,N.Eb4),
+      ln(0,N.F4), ln(1,N.Ab4),ln(2,N.Bb4),ln(2,N.C5),
+      ln(2,N.Eb5),ln(2,N.C5), ln(1,N.Bb4),ln(0,N.Ab4),
+      ln(0,N.F4), ln(0,N.Eb4),ln(0,N.F4), ln(1,N.Ab4),
+      ln(1,N.Bb4),ln(2,N.C5), ln(2,N.Bb4),ln(1,N.Ab4),
+      ln(0,N.G4), ln(1,N.Ab4),ln(1,N.Bb4),ln(2,N.C5),
+      ln(2,N.F5), ln(2,N.Eb5),ln(2,N.C5), ln(2,N.Bb4),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const acidSeq=[N.C3,N.C3,N.Eb3,N.C3,N.Bb2,N.C3,N.G2,N.C3];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        kick(t,0.75); kick(t+beat,0.65); kick(t+beat*2,0.75); kick(t+beat*3,0.65);
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.F3,N.F3,N.Ab2,N.F3,N.Eb3,N.F3,N.Ab2,N.Bb2];
+      const ch=[[N.F3,N.Ab3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Db3||N.D3,N.F3,N.Ab3],[N.Eb3,N.G3,N.Bb3]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.65); kick(t+beat*0.75,0.45); kick(t+beat*2,0.65); kick(t+beat*2.75,0.45);
         snare(t+beat,0.25); snare(t+beat*3,0.25);
-        for (let k=0;k<16;k++) hat(t+k*beat*0.25, k%4===0?0.11:0.07);
-        // 303 acid bass sweep
-        for (let k=0;k<8;k++) {
+        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%4===0?0.10:0.06);
+        for(let k=0;k<8;k++) bassNote(bl[k%8],t+k*beat*0.5,beat*0.45,0.36);
+        ch[i%4].forEach(f=>{
           const o=ctx.createOscillator(),g=ctx.createGain();
-          const f=ctx.createBiquadFilter();f.type='lowpass';f.Q.value=12;
-          o.type='sawtooth';o.frequency.value=acidSeq[k%8];
-          const at=t+k*beat*0.5;
-          f.frequency.setValueAtTime(200,at);f.frequency.exponentialRampToValueAtTime(3000,at+beat*0.3);
-          f.frequency.exponentialRampToValueAtTime(200,at+beat*0.5);
-          o.connect(f);f.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.18,at);g.gain.exponentialRampToValueAtTime(0.001,at+beat*0.5);
-          o.start(at);o.stop(at+beat*0.55);nodes.push(o,f,g);
-        }
+          const lp=ctx.createBiquadFilter();lp.type='lowpass';
+          lp.frequency.setValueAtTime(400,t);lp.frequency.linearRampToValueAtTime(1600,t+beat*2);
+          lp.frequency.linearRampToValueAtTime(400,t+beat*4);
+          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
+          g.gain.setValueAtTime(0.065,t);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
+          o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
+        });
       }
     }
   },
 
-  // ─── 9: JUNGLE MASSIVE ───
+  // ════════════════════════════════════════════
+  // 8. R&B — Isn't She Lovely スタイル (Stevie Wonder インスパイア)
+  // ════════════════════════════════════════════
   {
-    id:9, name:'JUNGLE MASSIVE', genre:'club', icon:'🔊',
-    bpm:160, duration:30, desc:'クラブ / 90s Jungle',
-    diff:{easy:4, normal:7, hard:10},
-    instrument: 'synth',
+    id:8, name:"ISN'T SHE GROOVY", genre:'rnb', icon:'✨',
+    bpm:100, duration:30, desc:'R&B / Stevie Wonder Style',
+    diff:{easy:2,normal:4,hard:7}, instrument:'electric',
 
-    buildMelody() {
-      const b = 60/160;
-      // Jungle/DnB - fast 16th stabs C minor
-      const mel = [
-        ln(0,N.C5),  ln(2,N.G5),  ln(0,N.C5),  ln(1,N.Eb5),
-        ln(2,N.G5),  ln(2,N.Bb5), ln(2,N.G5),  ln(1,N.Eb5),
-        ln(0,N.C5),  ln(0,N.Bb4), ln(0,N.C5),  ln(2,N.G5),
-        ln(1,N.Eb5), ln(0,N.C5),  ln(0,N.Bb4), ln(0,N.G4),
-        ln(0,N.G4),  ln(1,N.Bb4), ln(0,N.C5),  ln(1,N.Eb5),
-        ln(2,N.G5),  ln(2,N.Bb5), ln(2,N.C5),  ln(2,N.Eb5),
-        ln(2,N.Bb5), ln(2,N.G5),  ln(1,N.Eb5), ln(1,N.C5),
-        ln(0,N.Bb4), ln(0,N.G4),  ln(0,N.Eb4), ln(0,N.C4),
-      ];
-      return melodyToLanes(mel, b*1, b*0.25, 31);
-    },
+    mel: [
+      // E major - bright, joyful
+      ln(2,N.E5), ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),
+      ln(2,N.Ab5),ln(2,N.Gb5),ln(1,N.E5), ln(1,N.B4),
+      ln(1,N.Ab4),ln(0,N.Gb4),ln(0,N.E4), ln(0,N.Gb4),
+      ln(1,N.Ab4),ln(1,N.B4), ln(2,N.E5), ln(2,N.Gb5),
+      ln(2,N.Ab5),ln(2,N.B4), ln(2,N.Ab5),ln(2,N.Gb5),
+      ln(1,N.E5), ln(1,N.Ab4),ln(0,N.Gb4),ln(0,N.E4),
+      ln(0,N.Gb4),ln(1,N.Ab4),ln(2,N.B4), ln(2,N.E5),
+      ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),ln(2,N.E5),
+    ],
+    stepFn(b){ return b*0.5; },
 
-    bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      // Amen break pattern
-      const amenPat=[{dt:0,k:true},{dt:.375,k:false},{dt:.75,k:true},{dt:1,k:false},
-                     {dt:1.5,k:true},{dt:2,k:true},{dt:2.375,k:false},{dt:2.75,k:true},
-                     {dt:3,k:false},{dt:3.5,k:true},{dt:3.75,k:false}];
-      const bassSeq=[N.C3,N.C3,N.Eb3,N.C3,N.Bb2,N.C3,N.G2,N.Ab3];
-      for (let i = 0; i < bars; i++) {
-        const t = startT + i * beat * 4;
-        amenPat.forEach(n => { n.k ? kick(t+n.dt*beat,0.65) : snare(t+n.dt*beat,0.22); });
-        for (let k=0;k<16;k++) hat(t+k*beat*0.25, k%4===0?0.10:0.05);
-        for (let k=0;k<8;k++) bassNote(bassSeq[k%8], t+k*beat*0.5, beat*0.45, 0.38);
-        // Reese bass
-        [N.C3,N.C3*1.015].forEach(f=>{
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.E3,N.E3,N.A2,N.A2,N.B2,N.B2,N.Ab2,N.Ab2];
+      const ch=[[N.E4,N.Ab4,N.B4],[N.A3,N.C4,N.E4],[N.B3,N.D4,N.Gb4],[N.Ab3,N.C4,N.E4]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.60); kick(t+beat*2.5,0.45);
+        snare(t+beat,0.22); snare(t+beat*3,0.22);
+        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.10:0.06);
+        // Thumb bass (slap feel)
+        bassNote(bl[i%8],t,beat*0.3,0.45);
+        bassNote(bl[i%8],t+beat*1.5,beat*0.3,0.35);
+        bassNote(bl[(i+1)%8],t+beat*2,beat*0.3,0.45);
+        bassNote(bl[(i+1)%8],t+beat*3.5,beat*0.3,0.35);
+        pad(ch[i%4],t,beat*4,0.055,'sine');
+        clap(t+beat,0.18); clap(t+beat*3,0.18);
+      }
+    }
+  },
+
+  // ════════════════════════════════════════════
+  // 9. R&B — I Will Always Love You スタイル (Whitney Houston インスパイア)
+  // ════════════════════════════════════════════
+  {
+    id:9, name:'ALWAYS LOVE YOU', genre:'rnb', icon:'💖',
+    bpm:66, duration:30, desc:'R&B / Power Ballad',
+    diff:{easy:1,normal:3,hard:6}, instrument:'bell',
+
+    mel: [
+      // D major - soaring ballad melody
+      ln(0,N.D4), ln(0,N.D4), ln(1,N.E4), ln(1,N.Gb4),
+      ln(2,N.A4), ln(2,N.A4), ln(1,N.Gb4),ln(1,N.E4),
+      ln(1,N.D4), ln(0,N.D4), ln(0,N.E4), ln(1,N.D4),
+      ln(1,N.A4), ln(2,N.A4), ln(2,N.A4), ln(2,N.B4),
+      ln(2,N.D5), ln(2,N.D5), ln(2,N.E5), ln(2,N.Gb5),
+      ln(2,N.A5), ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5),
+      ln(1,N.E5), ln(2,N.Gb5),ln(2,N.A5), ln(2,N.B5)||ln(2,N.Bb5),
+      ln(2,N.A5), ln(2,N.Gb5),ln(2,N.E5), ln(2,N.D5),
+    ],
+    stepFn(b){ return b; },
+
+    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
+      const bl=[N.D3,N.D3,N.G3,N.G3,N.A3,N.A3,N.Bb3||N.B3,N.A3];
+      const ch=[[N.D4,N.Gb4,N.A4],[N.G3,N.B3,N.D4],[N.A3,N.C4,N.E4],[N.Bb3||N.B3,N.D4,N.F4]];
+      for(let i=0;i<bars;i++){
+        const t=startT+i*beat*4;
+        kick(t,0.30); kick(t+beat*2,0.22);
+        snare(t+beat,0.15); snare(t+beat*3,0.15);
+        bassNote(bl[i%8],t,beat*4,0.30);
+        pad(ch[i%4],t,beat*4,0.07,'sine');
+        // Soft hats
+        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.06);
+        // Strings swell
+        [ch[i%4][0]*2,ch[i%4][1]*2].forEach(f=>{
           const o=ctx.createOscillator(),g=ctx.createGain();
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=350;
-          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.07,t);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
+          o.type='sawtooth';o.frequency.value=f;
+          const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=700;
+          o.connect(lp);lp.connect(g);g.connect(master);
+          g.gain.setValueAtTime(0.0,t);g.gain.linearRampToValueAtTime(0.04,t+beat);
+          g.gain.setValueAtTime(0.04,t+beat*3);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
           o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
         });
       }
     }
   }
-];
+
+]; // end SONGS
 
 // ===== DIFFICULTY FILTER =====
+// Filters each lane independently to ensure all 3 lanes always appear
 function filterChart(rawChart, difficulty) {
   if (difficulty === 'hard') return rawChart;
 
-  // Sort by time first
-  const sorted = [...rawChart].sort((a, b) => a.time - b.time);
+  // Split by lane
+  const byLane = [[],[],[]];
+  rawChart.forEach(n => byLane[n.lane].push(n));
 
+  let result = [];
   if (difficulty === 'easy') {
-    // Keep every 4th note across all lanes - very sparse
-    // Ensure no two notes at same time
-    const result = [];
-    let lastTime = -1;
-    sorted.forEach((n, i) => {
-      if (i % 4 === 0 && n.time - lastTime > 0.2) {
-        result.push(n);
-        lastTime = n.time;
-      }
+    // Each lane: keep every Nth note
+    byLane.forEach((laneNotes, li) => {
+      const step = li === 2 ? 2 : 3; // high lane denser
+      laneNotes.forEach((n,i) => { if(i%step===0) result.push(n); });
     });
-    return result;
-  } else {
-    // Normal: every 2nd note, no simultaneous notes
-    const result = [];
-    let lastTime = -1;
-    sorted.forEach((n, i) => {
-      if (i % 2 === 0 && n.time - lastTime > 0.1) {
-        result.push(n);
-        lastTime = n.time;
-      }
+  } else { // normal
+    byLane.forEach((laneNotes, li) => {
+      laneNotes.forEach((n,i) => { if(i%2===0) result.push(n); });
     });
-    return result;
   }
+
+  // Sort by time and remove notes too close together (< 80ms apart)
+  result.sort((a,b) => a.time - b.time);
+  const clean = [];
+  let lastT = -1;
+  result.forEach(n => {
+    if (n.time - lastT >= 0.08) { clean.push(n); lastT = n.time; }
+  });
+  return clean;
 }
 
 // ===== GAME ENGINE =====
@@ -661,7 +590,7 @@ const Game = (() => {
   let perfect=0, good=0, miss=0;
   let gameRunning=false, gamePaused=false;
   let gameStartTime=0, noteSpeed=300;
-  let judgeWindow={perfect:0.18,good:0.30};
+  let judgeWindow={perfect:0.18,good:0.32};
   let animFrame=null, judgeTimer=null, playfieldH=0;
   let pendingNotes=[], activeNotes=[], hitNotes=new Set();
   let totalNoteCount=0, gaugeScore=0;
@@ -677,10 +606,20 @@ const Game = (() => {
   function showTitle() { AudioEngine.stopAll(); showScreen('screen-title'); }
   function showSongSelect() { AudioEngine.stopAll(); buildSongList(); showScreen('screen-select'); }
 
+  const GENRE_LABELS = {classic:'🎼 クラシック',jpop:'🌸 J-POP',western:'🎸 洋楽',club:'🎛 クラブ',rnb:'✨ R&B'};
+
   function buildSongList() {
     const list=document.getElementById('song-list');
     list.innerHTML='';
+    let lastGenre='';
     SONGS.forEach(song=>{
+      if (song.genre !== lastGenre) {
+        const hdr=document.createElement('div');
+        hdr.className='genre-header';
+        hdr.textContent=GENRE_LABELS[song.genre]||song.genre;
+        list.appendChild(hdr);
+        lastGenre=song.genre;
+      }
       const stars=song.diff[currentDiff];
       const card=document.createElement('div');
       card.className=`song-card genre-${song.genre}`;
@@ -710,10 +649,14 @@ const Game = (() => {
   function startGame(song) {
     AudioEngine.init();
     currentSong=song;
-    const raw=song.buildMelody();
-    chart=filterChart(raw, currentDiff);
-    totalNoteCount=chart.length;
-    pendingNotes=[...chart].sort((a,b)=>a.time-b.time);
+
+    // Build chart using song's mel array and stepFn
+    const b = 60/song.bpm;
+    const step = song.stepFn(b);
+    const raw = buildChart(song.mel, b*2, step, song.duration);
+    chart = filterChart(raw, currentDiff);
+    totalNoteCount = chart.length;
+    pendingNotes = [...chart].sort((a,b2)=>a.time-b2.time);
     activeNotes=[]; hitNotes=new Set();
     score=0;combo=0;maxCombo=0;health=100;perfect=0;good=0;miss=0;gaugeScore=0;
 
@@ -730,7 +673,7 @@ const Game = (() => {
     noteElements={};
     updateGauge();
 
-    noteSpeed={easy:200, normal:300, hard:420}[currentDiff];
+    noteSpeed={easy:200,normal:310,hard:440}[currentDiff];
     judgeWindow={
       easy:  {perfect:0.22, good:0.38},
       normal:{perfect:0.12, good:0.22},
@@ -742,19 +685,20 @@ const Game = (() => {
     gameRunning=true; gamePaused=false;
 
     gameStartTime=AudioEngine.now()+0.5;
-    AudioEngine.playBackground(song, gameStartTime, song.duration);
+    AudioEngine.playBG(song, gameStartTime, song.duration);
 
-    if (animFrame) cancelAnimationFrame(animFrame);
+    if(animFrame) cancelAnimationFrame(animFrame);
     animFrame=requestAnimationFrame(gameLoop);
   }
 
   function gameLoop() {
     if (!gameRunning) return;
     if (gamePaused) { animFrame=requestAnimationFrame(gameLoop); return; }
-    const elapsed=AudioEngine.now()-gameStartTime;
 
-    const spawnAhead=playfieldH/noteSpeed+0.2;
-    while (pendingNotes.length>0 && pendingNotes[0].time-elapsed<spawnAhead) {
+    const elapsed=AudioEngine.now()-gameStartTime;
+    const spawnAhead=playfieldH/noteSpeed+0.25;
+
+    while(pendingNotes.length>0 && pendingNotes[0].time-elapsed<spawnAhead) {
       spawnNote(pendingNotes.shift());
     }
     updateNotes(elapsed);
@@ -763,8 +707,8 @@ const Game = (() => {
     document.getElementById('progress-bar').style.width=
       (Math.max(0,Math.min(elapsed/currentSong.duration,1))*100)+'%';
 
-    // End: all notes played AND song has ended
-    if (pendingNotes.length===0 && activeNotes.length===0 && elapsed>=currentSong.duration+1.0) {
+    // End when song time passed AND no notes remain
+    if(elapsed >= currentSong.duration+2.0 && pendingNotes.length===0 && activeNotes.length===0) {
       endGame(); return;
     }
     animFrame=requestAnimationFrame(gameLoop);
@@ -774,7 +718,7 @@ const Game = (() => {
     const el=document.createElement('div');
     el.className='note';
     el.dataset.lane=note.lane;
-    const id=note.time.toFixed(4)+'_'+note.lane+'_'+Math.random().toString(36).slice(2,6);
+    const id=note.time.toFixed(4)+'_'+note.lane+'_'+Math.random().toString(36).slice(2,5);
     el.dataset.id=id;
     const laneLeft=[0,33.33,66.66];
     el.style.left=laneLeft[note.lane]+'%';
@@ -782,13 +726,13 @@ const Game = (() => {
     el.style.top='-34px';
     document.getElementById('notes-container').appendChild(el);
     noteElements[id]=el;
-    activeNotes.push({...note, elId:id});
+    activeNotes.push({...note,elId:id});
   }
 
   function updateNotes(elapsed) {
     activeNotes.forEach(note=>{
       const el=noteElements[note.elId];
-      if (!el) return;
+      if(!el) return;
       el.style.top=(playfieldH-(note.time-elapsed)*noteSpeed-32)+'px';
     });
   }
@@ -796,9 +740,9 @@ const Game = (() => {
   function checkMisses(elapsed) {
     const toRemove=[];
     activeNotes.forEach(note=>{
-      if (hitNotes.has(note.elId)) { toRemove.push(note.elId); return; }
-      if (note.time-elapsed < -judgeWindow.good) {
-        registerJudge('miss', note.lane, note.elId, note);
+      if(hitNotes.has(note.elId)){toRemove.push(note.elId);return;}
+      if(note.time-elapsed < -judgeWindow.good) {
+        registerJudge('miss',note.lane,note.elId,note);
         toRemove.push(note.elId);
       }
     });
@@ -808,28 +752,27 @@ const Game = (() => {
   function removeNote(id) {
     activeNotes=activeNotes.filter(n=>n.elId!==id);
     const el=noteElements[id];
-    if (el) { el.remove(); delete noteElements[id]; }
+    if(el){el.remove();delete noteElements[id];}
   }
 
   function onKeyDown(e) {
-    if (!gameRunning||gamePaused) return;
-    if (e.repeat) return;
+    if(!gameRunning||gamePaused||e.repeat) return;
     const lane=KEY_MAP[e.key.toLowerCase()];
-    if (lane===undefined||keyState[lane]) return;
+    if(lane===undefined||keyState[lane]) return;
     keyState[lane]=true;
     pressLane(lane);
     document.getElementById(`btn-${lane}`).classList.add('pressed');
   }
   function onKeyUp(e) {
     const lane=KEY_MAP[e.key.toLowerCase()];
-    if (lane===undefined) return;
+    if(lane===undefined) return;
     keyState[lane]=false;
     document.getElementById(`btn-${lane}`)?.classList.remove('pressed');
   }
   function onTouch(lane,down) {
     AudioEngine.resume();
-    if (down) {
-      if (!gameRunning||gamePaused) return;
+    if(down) {
+      if(!gameRunning||gamePaused) return;
       pressLane(lane);
       document.getElementById(`btn-${lane}`).classList.add('pressed');
     } else {
@@ -841,40 +784,36 @@ const Game = (() => {
     const elapsed=AudioEngine.now()-gameStartTime;
     let bestNote=null, bestDiff=Infinity;
     activeNotes.forEach(note=>{
-      if (note.lane!==lane||hitNotes.has(note.elId)) return;
+      if(note.lane!==lane||hitNotes.has(note.elId)) return;
       const d=Math.abs(note.time-elapsed);
-      if (d<bestDiff) { bestDiff=d; bestNote=note; }
+      if(d<bestDiff){bestDiff=d;bestNote=note;}
     });
 
-    if (!bestNote) {
-      // Play melody sound even on empty press (just for feel)
-      const fallbackFreqs=[N.A4, N.C5, N.E5];
-      AudioEngine.hitMelody(fallbackFreqs[lane], currentSong?.instrument||'piano');
+    if(!bestNote) {
+      // Play fallback sound even with no note
+      const fallback=[N.A4,N.C5,N.E5][lane];
+      AudioEngine.hitNote(fallback, currentSong?.instrument||'piano');
       return;
     }
 
-    if (bestDiff<=judgeWindow.perfect) {
+    if(bestDiff<=judgeWindow.perfect) {
       registerJudge('perfect',lane,bestNote.elId,bestNote);
       hitNotes.add(bestNote.elId); removeNote(bestNote.elId);
-    } else if (bestDiff<=judgeWindow.good) {
+    } else if(bestDiff<=judgeWindow.good) {
       registerJudge('good',lane,bestNote.elId,bestNote);
       hitNotes.add(bestNote.elId); removeNote(bestNote.elId);
     }
-    // Too early = ignored (no penalty)
   }
 
   function registerJudge(type,lane,noteId,note) {
-    if (type!=='miss') {
-      AudioEngine.hitMelody(note.freq, currentSong?.instrument||'piano');
-    } else {
-      AudioEngine.hitMiss();
-    }
+    if(type!=='miss') AudioEngine.hitNote(note.freq, currentSong?.instrument||'piano');
+    else AudioEngine.hitMiss();
 
-    if (type==='perfect') {
+    if(type==='perfect'){
       score+=300+combo*2; combo++; if(combo>maxCombo)maxCombo=combo;
       health=Math.min(100,health+1.5); perfect++;
       gaugeScore=Math.min(100,gaugeScore+(100/totalNoteCount)*1.5);
-    } else if (type==='good') {
+    } else if(type==='good'){
       score+=100+combo; combo++; if(combo>maxCombo)maxCombo=combo;
       good++;
       gaugeScore=Math.min(100,gaugeScore+(100/totalNoteCount)*0.8);
@@ -896,25 +835,26 @@ const Game = (() => {
     updateGauge();
     showJudge(type,combo);
     showHitEffect(type,lane);
-    if (health<=0) endGame();
+    if(health<=0) endGame();
   }
 
   function updateGauge() {
     const fill=document.getElementById('gauge-fill');
     const label=document.getElementById('gauge-label');
-    if (!fill) return;
+    if(!fill) return;
     const pct=Math.round(gaugeScore);
     fill.style.width=pct+'%';
     const pass=pct>=GAUGE_PASS;
     fill.className='gauge-fill '+(pass?'pass':'warn');
-    if (label) label.textContent=pct+'%'+(pass?' ✓':'');
+    if(label) label.textContent=pct+'%'+(pass?' ✓':'');
   }
 
   function showJudge(type,combo) {
-    if (judgeTimer) clearTimeout(judgeTimer);
+    if(judgeTimer) clearTimeout(judgeTimer);
     const el=document.getElementById('judge-display');
     const text={perfect:'PERFECT',good:'GOOD',miss:'MISS'}[type];
-    el.innerHTML=`<div class="judge-${type}">${text}${combo>1?`<div class="judge-combo">${combo} COMBO</div>`:''}</div>`;
+    const comboHtml=combo>1?`<div class="judge-combo">${combo} COMBO</div>`:'';
+    el.innerHTML=`<div class="judge-${type}">${text}${comboHtml}</div>`;
     judgeTimer=setTimeout(()=>{el.innerHTML='';},420);
   }
 
@@ -928,7 +868,7 @@ const Game = (() => {
   }
 
   function pause() {
-    if (!gameRunning) return;
+    if(!gameRunning) return;
     gamePaused=true;
     document.getElementById('screen-pause').classList.add('active');
   }
@@ -940,7 +880,7 @@ const Game = (() => {
 
   function endGame() {
     gameRunning=false;
-    if (animFrame) cancelAnimationFrame(animFrame);
+    if(animFrame) cancelAnimationFrame(animFrame);
     AudioEngine.stopAll();
 
     const acc=totalNoteCount>0?(perfect*300+good*100)/(totalNoteCount*300):0;
@@ -959,7 +899,7 @@ const Game = (() => {
     document.getElementById('res-miss').textContent=miss;
     const rg=document.getElementById('res-gauge');
     const rc=document.getElementById('res-clear');
-    if(rg)rg.textContent=Math.round(gaugeScore)+'%';
+    if(rg) rg.textContent=Math.round(gaugeScore)+'%';
     if(rc){rc.textContent=passed?'✓ CLEAR':'✗ FAILED';rc.style.color=passed?'var(--accent4)':'#ff3333';}
 
     document.getElementById('screen-pause').classList.remove('active');

@@ -15,7 +15,10 @@
   --judge-y: calc(100vh - var(--btn-h) * 2 - 60px);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; touch-action: none; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* allow scroll on song list, block only on game elements */
+#screen-game, #screen-game * { touch-action: none; }
+.note-btn { touch-action: none; }
 
 body {
   background: var(--bg);
@@ -226,8 +229,20 @@ body {
   width: 100%;
   max-width: 600px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   flex: 1;
   padding: 8px;
+  overscroll-behavior: contain;
+}
+
+.genre-header {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  color: #555;
+  letter-spacing: 0.3em;
+  padding: 12px 8px 4px;
+  border-bottom: 1px solid #1a1a2e;
+  margin-bottom: 4px;
 }
 .song-card {
   display: flex;
@@ -249,7 +264,10 @@ body {
   width: 3px;
 }
 .song-card.genre-classic::before { background: var(--accent1); }
-.song-card.genre-club::before { background: var(--accent2); }
+.song-card.genre-jpop::before    { background: #ff88cc; }
+.song-card.genre-western::before { background: var(--accent3); }
+.song-card.genre-club::before    { background: var(--accent2); }
+.song-card.genre-rnb::before     { background: #aa44ff; }
 .song-card:hover {
   background: #141428;
   border-color: #333;
@@ -490,16 +508,18 @@ body {
 /* Judge display */
 .judge-display {
   position: fixed;
-  top: 50%;
+  top: 40%;
   left: 50%;
   transform: translate(-50%, -50%);
   font-family: 'Orbitron', sans-serif;
-  font-size: 32px;
+  font-size: clamp(22px, 6vw, 32px);
   font-weight: 900;
   pointer-events: none;
-  z-index: 20;
+  z-index: 50;
   text-align: center;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  width: 100%;
 }
 .judge-perfect { color: var(--accent1); text-shadow: 0 0 20px var(--accent1); animation: judgepop 0.4s ease-out forwards; }
 .judge-good    { color: var(--accent4); text-shadow: 0 0 15px var(--accent4); animation: judgepop 0.4s ease-out forwards; }
