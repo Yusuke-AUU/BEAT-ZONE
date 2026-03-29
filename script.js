@@ -143,25 +143,33 @@ const AudioEngine = (() => {
 })();
 
 // ===== MELODY → 3 LANES HELPER =====
-// Takes a flat melody array and distributes into 3 lanes (Low/Mid/High)
-// by splitting the melody into thirds by pitch range
-function melodyToLanes(melNotes, startTime, stepTime) {
-  // Sort a copy by freq to find pitch ranges
+// Distributes melody notes into 3 lanes by pitch (Low/Mid/High)
+// Loops the pattern to fill the full song duration
+function melodyToLanes(melNotes, startTime, stepTime, duration) {
+  duration = duration || 35; // default fill duration
+
+  // Determine pitch ranges
   const freqs = melNotes.map(f => typeof f === 'number' ? f : f.freq).filter(Boolean);
   const sorted = [...freqs].sort((a,b) => a-b);
-  const lo = sorted[Math.floor(sorted.length * 0.33)];
-  const hi = sorted[Math.floor(sorted.length * 0.67)];
+  const loThresh = sorted[Math.floor(sorted.length * 0.33)];
+  const hiThresh = sorted[Math.floor(sorted.length * 0.67)];
+
+  const patternDur = melNotes.length * stepTime;
+  const totalNeeded = Math.ceil((duration - startTime + 1) / patternDur) + 1;
 
   const notes = [];
-  melNotes.forEach((item, i) => {
-    const freq = typeof item === 'number' ? item : item.freq;
-    const t = startTime + i * stepTime;
-    let lane;
-    if (freq <= lo) lane = 0;
-    else if (freq <= hi) lane = 1;
-    else lane = 2;
-    notes.push({ time: t, lane, freq });
-  });
+  for (let rep = 0; rep < totalNeeded; rep++) {
+    melNotes.forEach((item, i) => {
+      const freq = typeof item === 'number' ? item : item.freq;
+      const t = startTime + rep * patternDur + i * stepTime;
+      if (t > duration + 1) return; // don't go beyond song
+      let lane;
+      if (freq <= loThresh) lane = 0;
+      else if (freq <= hiThresh) lane = 1;
+      else lane = 2;
+      notes.push({ time: t, lane, freq });
+    });
+  }
   return notes;
 }
 
@@ -181,16 +189,20 @@ const SONGS = [
     // Full melody chart (Hard = all notes)
     buildMelody() {
       const b = 60/108, tri = b/3;
-      // Moonlight triplet melody - full sequence
+      // Moonlight Sonata authentic triplets - Cis minor
+      // Pattern: low note, mid arpeggio, high arpeggio (the iconic feel)
       const mel = [
-        N.A4,N.E4,N.A4, N.A4,N.E4,N.A4, N.A4,N.E4,N.A4, N.A4,N.E4,N.A4,
-        N.B4,N.D4,N.G4, N.B4,N.D4,N.G4, N.B4,N.D4,N.G4, N.B4,N.D4,N.G4,
-        N.A4,N.C4,N.E4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4,
-        N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,
-        N.G4,N.B3,N.D4, N.G4,N.B3,N.D4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4,
-        N.Gb4,N.A3,N.D4,N.Gb4,N.A3,N.D4,N.E4,N.A3,N.C4, N.E4,N.A3,N.C4
+        // Verse 1 - Cis minor
+        N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,
+        N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,
+        // Verse 2 - modulate
+        N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,
+        N.B3, N.E4,  N.Ab4, N.B3, N.E4,  N.Ab4, N.B3, N.Eb4, N.Ab4, N.B3, N.Eb4, N.Ab4,
+        // Rise
+        N.C4, N.E4,  N.A4,  N.D4, N.Gb4, N.B4,  N.E4, N.Ab4, N.C5,  N.E4, N.Ab4, N.C5,
+        N.D4, N.Gb4, N.B4,  N.C4, N.E4,  N.A4,  N.B3, N.E4,  N.Ab4, N.A3, N.E4,  N.A4
       ];
-      return melodyToLanes(mel, b*2, tri);
+      return melodyToLanes(mel, b*2, tri, 33);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -230,15 +242,22 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/116;
+      // Pachelbel Canon - authentic descending bass + rising melody
       const mel = [
-        N.Gb4,N.E4,N.D4,N.Gb4,N.A4,N.Gb4,N.E4,N.D4,
-        N.A4,N.B4,N.A4,N.Gb4,N.E4,N.Gb4,N.A4,N.B4,
-        N.D5,N.C5,N.B4,N.A4,N.Gb4,N.A4,N.B4,N.C5,
-        N.B4,N.A4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.A4,
-        N.D5,N.E5,N.Gb5||N.G5,N.A5,N.Gb5||N.G5,N.E5,N.D5,N.C5,
-        N.B4,N.A4,N.G4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4
+        // Section A: simple quarter notes
+        N.Gb4, N.E4, N.D4, N.Gb4,  N.A4, N.Gb4, N.E4, N.D4,
+        // Section B: 8th notes with passing tones
+        N.A4, N.B4, N.A4, N.Gb4,   N.E4, N.Gb4, N.A4, N.B4,
+        // Section C: higher register
+        N.D5, N.C5, N.B4, N.A4,    N.Gb4, N.A4, N.B4, N.C5,
+        // Section D: runs
+        N.B4, N.C5, N.D5, N.C5,    N.B4, N.A4, N.Gb4, N.E4,
+        // Section E: peak
+        N.D5, N.E5, N.Gb5, N.E5,   N.D5, N.B4, N.A4, N.Gb4,
+        // Section F: descend and resolve
+        N.E4, N.Gb4, N.A4, N.B4,   N.D5, N.C5, N.B4, N.A4
       ];
-      return melodyToLanes(mel, b*2, b*0.5);
+      return melodyToLanes(mel, b*2, b*0.5, 33);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -424,14 +443,21 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/121;
+      // "Around the World" - iconic repeating hook in A minor
+      // The magic is the repetition with slight variations each cycle
       const mel = [
-        N.A4,N.A4,N.A4,N.G4,N.A4,N.A4,N.E4,N.A4,
-        N.A4,N.A4,N.A4,N.G4,N.A4,N.C5,N.E5,N.A5,
-        N.G4,N.A4,N.G4,N.E4,N.A4,N.G4,N.E4,N.D4,
-        N.E4,N.G4,N.A4,N.G4,N.E4,N.D4,N.E4,N.A4,
-        N.C5,N.E5,N.A5,N.E5,N.C5,N.A4,N.G4,N.E4
+        // Hook 1
+        N.A4,N.A4,N.A4,N.G4,  N.A4,N.A4,N.E5,N.A4,
+        // Hook 2 (same but with high peak)
+        N.A4,N.A4,N.A4,N.G4,  N.A4,N.C5,N.E5,N.A5,
+        // Hook 3 (descend)
+        N.G5,N.E5,N.C5,N.A4,  N.G4,N.E4,N.A4,N.G4,
+        // Hook 4 (low)
+        N.E4,N.D4,N.E4,N.G4,  N.A4,N.G4,N.E4,N.A4,
+        // Hook 5 (climb back up)
+        N.A4,N.C5,N.E5,N.G5,  N.A5,N.G5,N.E5,N.C5
       ];
-      return melodyToLanes(mel, b*2, b*0.5);
+      return melodyToLanes(mel, b*2, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -506,14 +532,20 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/138;
+      // Acid House lead - syncopated, bouncy
       const mel = [
-        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.G4,N.Eb4,N.C4,
-        N.C5,N.Eb5,N.G5,N.Bb5,N.Ab5,N.G5,N.Eb5,N.C5,
-        N.C5,N.Bb4,N.Ab4,N.G4,N.F4,N.G4,N.Ab4,N.Bb4,
-        N.C5,N.Eb5,N.F5,N.Eb5,N.C5,N.Bb4,N.G4,N.C5,
-        N.Eb5,N.G5,N.Bb5,N.G5,N.Eb5,N.C5,N.Bb4,N.G4
+        // Riff A - C minor pentatonic
+        N.C5,N.C5,N.Eb5,N.C5,  N.Bb4,N.C5,N.G4,N.C5,
+        // Riff B - higher
+        N.G5,N.Eb5,N.G5,N.Bb5, N.G5,N.Eb5,N.C5,N.Bb4,
+        // Riff C - descend
+        N.Ab4,N.Bb4,N.C5,N.Eb5,N.G5,N.Eb5,N.C5,N.Ab4,
+        // Riff D - peak and drop
+        N.Bb5,N.G5,N.Eb5,N.C5, N.G4,N.Bb4,N.C5,N.Eb5,
+        // Riff E - resolve
+        N.G5,N.F5,N.Eb5,N.C5,  N.Bb4,N.G4,N.Eb4,N.C4
       ];
-      return melodyToLanes(mel, b*1, b*0.5);
+      return melodyToLanes(mel, b*1, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -548,14 +580,20 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/160;
+      // Jungle/DnB - fast stabs, Amen break feel
       const mel = [
-        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.G4,N.Eb4,N.C4,
-        N.G5,N.F5,N.Eb5,N.C5,N.Bb4,N.C5,N.Eb5,N.G5,
-        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.Bb5,N.G5,N.Eb5,
-        N.C5,N.Bb4,N.G4,N.Eb4,N.C4,N.Eb4,N.G4,N.C5,
-        N.G5,N.Bb5,N.C5,N.Bb5,N.G5,N.Eb5,N.C5,N.G4
+        // Stab A
+        N.C5,N.G5,N.C5,N.Eb5,  N.G5,N.Bb5,N.G5,N.Eb5,
+        // Stab B - syncopated
+        N.C5,N.Bb4,N.C5,N.G5,  N.Eb5,N.C5,N.Bb4,N.G4,
+        // Rise
+        N.G4,N.Bb4,N.C5,N.Eb5, N.G5,N.Bb5,N.C5,N.Eb5,
+        // Fall
+        N.Bb5,N.G5,N.Eb5,N.C5, N.Bb4,N.G4,N.Eb4,N.C4,
+        // Resolve
+        N.C5,N.Eb5,N.G5,N.C5,  N.G5,N.Eb5,N.C5,N.Bb4
       ];
-      return melodyToLanes(mel, b*1, b*0.5);
+      return melodyToLanes(mel, b*1, b*0.25, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -725,7 +763,8 @@ const Game = (() => {
     document.getElementById('progress-bar').style.width=
       (Math.max(0,Math.min(elapsed/currentSong.duration,1))*100)+'%';
 
-    if (elapsed>=currentSong.duration+2.0 && pendingNotes.length===0) {
+    // End: all notes played AND song has ended
+    if (pendingNotes.length===0 && activeNotes.length===0 && elapsed>=currentSong.duration+1.0) {
       endGame(); return;
     }
     animFrame=requestAnimationFrame(gameLoop);
