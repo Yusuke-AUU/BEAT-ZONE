@@ -143,35 +143,28 @@ const AudioEngine = (() => {
 })();
 
 // ===== MELODY → 3 LANES HELPER =====
-// Distributes melody notes into 3 lanes by pitch (Low/Mid/High)
+// melNotes: array where each entry is { lane:0|1|2, freq } or just a freq number (auto-assigned)
+// Explicit lane assignment ensures all 3 lanes always appear
 // Loops the pattern to fill the full song duration
 function melodyToLanes(melNotes, startTime, stepTime, duration) {
-  duration = duration || 35; // default fill duration
-
-  // Determine pitch ranges
-  const freqs = melNotes.map(f => typeof f === 'number' ? f : f.freq).filter(Boolean);
-  const sorted = [...freqs].sort((a,b) => a-b);
-  const loThresh = sorted[Math.floor(sorted.length * 0.33)];
-  const hiThresh = sorted[Math.floor(sorted.length * 0.67)];
-
+  duration = duration || 34;
   const patternDur = melNotes.length * stepTime;
-  const totalNeeded = Math.ceil((duration - startTime + 1) / patternDur) + 1;
-
+  const reps = Math.ceil((duration - startTime + 1) / patternDur) + 1;
   const notes = [];
-  for (let rep = 0; rep < totalNeeded; rep++) {
+  for (let rep = 0; rep < reps; rep++) {
     melNotes.forEach((item, i) => {
-      const freq = typeof item === 'number' ? item : item.freq;
       const t = startTime + rep * patternDur + i * stepTime;
-      if (t > duration + 1) return; // don't go beyond song
-      let lane;
-      if (freq <= loThresh) lane = 0;
-      else if (freq <= hiThresh) lane = 1;
-      else lane = 2;
+      if (t > duration + 0.5) return;
+      const freq  = typeof item === 'object' ? item.freq  : item;
+      const lane  = typeof item === 'object' ? item.lane  : (i % 3);
       notes.push({ time: t, lane, freq });
     });
   }
   return notes;
 }
+
+// Shorthand builders: each note is [lane, freq]
+function ln(lane, freq) { return { lane, freq }; }
 
 // ===== SONG DEFINITIONS =====
 // Each note in chart: { time, lane (0=low,1=mid,2=high), freq, instrument }
@@ -189,18 +182,17 @@ const SONGS = [
     // Full melody chart (Hard = all notes)
     buildMelody() {
       const b = 60/108, tri = b/3;
-      // Moonlight Sonata authentic triplets - Cis minor
-      // Pattern: low note, mid arpeggio, high arpeggio (the iconic feel)
+      // Beethoven Moonlight Sonata Op.27 No.2 - triplet arpeggios Cis minor
+      // Each triplet: ln(0)=bass, ln(1)=middle, ln(2)=top
       const mel = [
-        // Verse 1 - Cis minor
-        N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,  N.E4, N.Ab4, N.B4,
-        N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,  N.D4, N.Gb4, N.A4,
-        // Verse 2 - modulate
-        N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,  N.C4, N.E4,  N.A4,
-        N.B3, N.E4,  N.Ab4, N.B3, N.E4,  N.Ab4, N.B3, N.Eb4, N.Ab4, N.B3, N.Eb4, N.Ab4,
-        // Rise
-        N.C4, N.E4,  N.A4,  N.D4, N.Gb4, N.B4,  N.E4, N.Ab4, N.C5,  N.E4, N.Ab4, N.C5,
-        N.D4, N.Gb4, N.B4,  N.C4, N.E4,  N.A4,  N.B3, N.E4,  N.Ab4, N.A3, N.E4,  N.A4
+        ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),   ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),
+        ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),   ln(0,N.A3), ln(1,N.E4), ln(2,N.A4),
+        ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),   ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),
+        ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),   ln(0,N.G3), ln(1,N.D4), ln(2,N.B4),
+        ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),   ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),
+        ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),   ln(0,N.F3), ln(1,N.C4), ln(2,N.A4),
+        ln(0,N.E3), ln(1,N.B3), ln(2,N.Ab4),  ln(0,N.E3), ln(1,N.B3), ln(2,N.Ab4),
+        ln(0,N.E3), ln(1,N.Eb4),ln(2,N.Ab4),  ln(0,N.E3), ln(1,N.Eb4),ln(2,N.Ab4),
       ];
       return melodyToLanes(mel, b*2, tri, 33);
     },
@@ -242,20 +234,16 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/116;
-      // Pachelbel Canon - authentic descending bass + rising melody
+      // Pachelbel Canon D major - 3 voice counterpoint
       const mel = [
-        // Section A: simple quarter notes
-        N.Gb4, N.E4, N.D4, N.Gb4,  N.A4, N.Gb4, N.E4, N.D4,
-        // Section B: 8th notes with passing tones
-        N.A4, N.B4, N.A4, N.Gb4,   N.E4, N.Gb4, N.A4, N.B4,
-        // Section C: higher register
-        N.D5, N.C5, N.B4, N.A4,    N.Gb4, N.A4, N.B4, N.C5,
-        // Section D: runs
-        N.B4, N.C5, N.D5, N.C5,    N.B4, N.A4, N.Gb4, N.E4,
-        // Section E: peak
-        N.D5, N.E5, N.Gb5, N.E5,   N.D5, N.B4, N.A4, N.Gb4,
-        // Section F: descend and resolve
-        N.E4, N.Gb4, N.A4, N.B4,   N.D5, N.C5, N.B4, N.A4
+        ln(0,N.D4),  ln(1,N.Gb4), ln(2,N.A4),   ln(0,N.A3),  ln(1,N.E4),  ln(2,N.A4),
+        ln(0,N.B3),  ln(1,N.D4),  ln(2,N.Gb4),  ln(0,N.Gb3), ln(1,N.A3),  ln(2,N.D4),
+        ln(0,N.G3),  ln(1,N.B3),  ln(2,N.D4),   ln(0,N.D3),  ln(1,N.Gb3), ln(2,N.A3),
+        ln(0,N.G3),  ln(1,N.B3),  ln(2,N.D4),   ln(0,N.A3),  ln(1,N.E4),  ln(2,N.A4),
+        ln(0,N.D4),  ln(2,N.Gb4), ln(0,N.A4),   ln(2,N.B4),  ln(1,N.A4),  ln(2,N.Gb4),
+        ln(0,N.E4),  ln(2,N.Gb4), ln(1,N.A4),   ln(2,N.B4),  ln(1,N.D5),  ln(2,N.E5),
+        ln(0,N.D5),  ln(1,N.C5),  ln(2,N.B4),   ln(1,N.A4),  ln(0,N.Gb4), ln(1,N.A4),
+        ln(0,N.B4),  ln(1,N.D5),  ln(2,N.Gb5),  ln(1,N.E5),  ln(0,N.D5),  ln(1,N.B4),
       ];
       return melodyToLanes(mel, b*2, b*0.5, 33);
     },
@@ -285,14 +273,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/72;
+      // Bach Air on G String - slow, lyrical, D major
       const mel = [
-        N.B4,N.A4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.A4,
-        N.B4,N.C5,N.B4,N.A4,N.G4,N.Gb4,N.E4,N.D4,
-        N.C5,N.B4,N.A4,N.G4,N.Gb4,N.G4,N.A4,N.B4,
-        N.E5,N.D5,N.C5,N.B4,N.A4,N.B4,N.C5,N.D5,
-        N.E5,N.Gb5||N.G5,N.E5,N.D5,N.C5,N.B4,N.A4,N.G4
+        ln(2,N.B4),  ln(1,N.A4),  ln(2,N.Gb4), ln(1,N.E4),
+        ln(0,N.D4),  ln(1,N.E4),  ln(2,N.Gb4), ln(2,N.A4),
+        ln(2,N.B4),  ln(2,N.C5),  ln(2,N.B4),  ln(1,N.A4),
+        ln(1,N.G4),  ln(1,N.Gb4), ln(0,N.E4),  ln(0,N.D4),
+        ln(2,N.C5),  ln(2,N.B4),  ln(1,N.A4),  ln(1,N.G4),
+        ln(1,N.Gb4), ln(1,N.G4),  ln(2,N.A4),  ln(2,N.B4),
+        ln(2,N.E5),  ln(2,N.D5),  ln(2,N.C5),  ln(2,N.B4),
+        ln(1,N.A4),  ln(1,N.B4),  ln(2,N.C5),  ln(2,N.D5),
       ];
-      return melodyToLanes(mel, b*3, b*0.5);
+      return melodyToLanes(mel, b*3, b*0.5, 33);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -327,14 +319,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/132;
+      // Bach Toccata & Fugue D minor - dramatic descending motif
       const mel = [
-        N.D5,N.C5,N.D5,N.Eb5,N.D5,N.C5,N.Bb4,N.A4,
-        N.Bb4,N.C5,N.Bb4,N.A4,N.G4,N.Gb4,N.G4,N.A4,
-        N.D5,N.Eb5,N.D5,N.C5,N.Bb4,N.A4,N.Bb4,N.C5,
-        N.D5,N.C5,N.Bb4,N.A4,N.G4,N.A4,N.Bb4,N.C5,
-        N.D5,N.F5,N.E5,N.D5,N.C5,N.Bb4,N.A4,N.G4
+        ln(2,N.D5),  ln(2,N.C5),  ln(2,N.D5),  ln(2,N.Eb5),
+        ln(2,N.D5),  ln(1,N.C5),  ln(1,N.Bb4), ln(0,N.A4),
+        ln(0,N.Bb4), ln(1,N.C5),  ln(1,N.Bb4), ln(1,N.A4),
+        ln(0,N.G4),  ln(0,N.Gb4), ln(0,N.G4),  ln(0,N.A4),
+        ln(2,N.D5),  ln(2,N.Eb5), ln(2,N.D5),  ln(2,N.C5),
+        ln(1,N.Bb4), ln(1,N.A4),  ln(1,N.Bb4), ln(2,N.C5),
+        ln(2,N.D5),  ln(2,N.F5),  ln(2,N.E5),  ln(2,N.D5),
+        ln(1,N.C5),  ln(0,N.Bb4), ln(0,N.A4),  ln(0,N.G4),
       ];
-      return melodyToLanes(mel, b*1.5, b*0.5);
+      return melodyToLanes(mel, b*1.5, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -360,15 +356,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/126;
-      // da-da-da-DUM motif, evenly spaced for lane detection
+      // Beethoven 5th Symphony C minor - da-da-da-DUM across 3 lanes
       const mel = [
-        N.G4,N.G4,N.G4,N.Eb4, N.F4,N.F4,N.F4,N.D4,
-        N.Eb4,N.Eb4,N.Eb4,N.C4, N.G4,N.G4,N.G4,N.Eb4,
-        N.Ab4,N.Ab4,N.Ab4,N.F4, N.G4,N.G4,N.F4,N.Eb4,
-        N.G4,N.G4,N.G4,N.Eb4, N.F4,N.F4,N.F4,N.D4,
-        N.Eb4,N.Eb4,N.Eb4,N.C4, N.Ab4,N.Ab4,N.G4,N.F4
+        ln(1,N.G4),  ln(1,N.G4),  ln(1,N.G4),  ln(0,N.Eb4),
+        ln(1,N.F4),  ln(1,N.F4),  ln(1,N.F4),  ln(0,N.D4),
+        ln(2,N.Eb4), ln(2,N.Eb4), ln(2,N.Eb4), ln(0,N.C4),
+        ln(2,N.G4),  ln(2,N.G4),  ln(2,N.G4),  ln(0,N.Eb4),
+        ln(2,N.Ab4), ln(2,N.Ab4), ln(2,N.Ab4), ln(0,N.F4),
+        ln(1,N.G4),  ln(2,N.Ab4), ln(2,N.G4),  ln(2,N.F4),
+        ln(2,N.Eb4), ln(1,N.F4),  ln(2,N.G4),  ln(2,N.Ab4),
+        ln(2,N.Bb4), ln(2,N.C5),  ln(2,N.Bb4), ln(2,N.Ab4),
       ];
-      return melodyToLanes(mel, b*2, b*0.5);
+      return melodyToLanes(mel, b*2, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -400,14 +399,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/130;
+      // New Order Blue Monday - F minor synth melody
       const mel = [
-        N.F4,N.Ab4,N.Bb4,N.C5,N.Bb4,N.Ab4,N.F4,N.Eb4,
-        N.F4,N.Ab4,N.Bb4,N.C5,N.Eb5,N.C5,N.Bb4,N.Ab4,
-        N.F4,N.Eb4,N.F4,N.Ab4,N.Bb4,N.C5,N.Bb4,N.Ab4,
-        N.G4,N.Ab4,N.Bb4,N.C5,N.F5,N.Eb5,N.C5,N.Bb4,
-        N.F5,N.Eb5,N.C5,N.Bb4,N.Ab4,N.Bb4,N.C5,N.Eb5
+        ln(0,N.F4),  ln(1,N.Ab4), ln(2,N.Bb4), ln(2,N.C5),
+        ln(2,N.Bb4), ln(1,N.Ab4), ln(0,N.F4),  ln(0,N.Eb4),
+        ln(0,N.F4),  ln(1,N.Ab4), ln(2,N.Bb4), ln(2,N.C5),
+        ln(2,N.Eb5), ln(2,N.C5),  ln(1,N.Bb4), ln(0,N.Ab4),
+        ln(0,N.F4),  ln(0,N.Eb4), ln(0,N.F4),  ln(1,N.Ab4),
+        ln(1,N.Bb4), ln(2,N.C5),  ln(2,N.Bb4), ln(1,N.Ab4),
+        ln(0,N.G4),  ln(1,N.Ab4), ln(1,N.Bb4), ln(2,N.C5),
+        ln(2,N.F5),  ln(2,N.Eb5), ln(2,N.C5),  ln(2,N.Bb4),
       ];
-      return melodyToLanes(mel, b*2, b*0.5);
+      return melodyToLanes(mel, b*2, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -443,19 +446,16 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/121;
-      // "Around the World" - iconic repeating hook in A minor
-      // The magic is the repetition with slight variations each cycle
+      // Daft Punk Around the World - A minor repeating hook
       const mel = [
-        // Hook 1
-        N.A4,N.A4,N.A4,N.G4,  N.A4,N.A4,N.E5,N.A4,
-        // Hook 2 (same but with high peak)
-        N.A4,N.A4,N.A4,N.G4,  N.A4,N.C5,N.E5,N.A5,
-        // Hook 3 (descend)
-        N.G5,N.E5,N.C5,N.A4,  N.G4,N.E4,N.A4,N.G4,
-        // Hook 4 (low)
-        N.E4,N.D4,N.E4,N.G4,  N.A4,N.G4,N.E4,N.A4,
-        // Hook 5 (climb back up)
-        N.A4,N.C5,N.E5,N.G5,  N.A5,N.G5,N.E5,N.C5
+        ln(0,N.A4),  ln(0,N.A4),  ln(1,N.A4),  ln(0,N.G4),
+        ln(0,N.A4),  ln(1,N.A4),  ln(2,N.E5),  ln(1,N.A4),
+        ln(0,N.A4),  ln(0,N.A4),  ln(1,N.A4),  ln(0,N.G4),
+        ln(1,N.A4),  ln(2,N.C5),  ln(2,N.E5),  ln(2,N.A5),
+        ln(2,N.G5),  ln(2,N.E5),  ln(1,N.C5),  ln(1,N.A4),
+        ln(0,N.G4),  ln(0,N.E4),  ln(1,N.A4),  ln(0,N.G4),
+        ln(0,N.E4),  ln(0,N.D4),  ln(0,N.E4),  ln(1,N.G4),
+        ln(1,N.A4),  ln(2,N.C5),  ln(2,N.E5),  ln(2,N.A5),
       ];
       return melodyToLanes(mel, b*2, b*0.5, 31);
     },
@@ -493,14 +493,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/123;
+      // Daft Punk One More Time - D major disco melody
       const mel = [
-        N.D5,N.E5,N.G5,N.A5,N.G5,N.E5,N.D5,N.C5,
-        N.B4,N.A4,N.G4,N.A4,N.B4,N.D5,N.E5,N.G5,
-        N.A5,N.G5,N.E5,N.D5,N.C5,N.B4,N.A4,N.G4,
-        N.A4,N.B4,N.D5,N.E5,N.G5,N.A5,N.G5,N.E5,
-        N.D5,N.E5,N.G5,N.A5,N.B5||N.B4,N.A5,N.G5,N.E5
+        ln(2,N.D5),  ln(2,N.E5),  ln(2,N.G5),  ln(2,N.A5),
+        ln(2,N.G5),  ln(1,N.E5),  ln(1,N.D5),  ln(1,N.C5),
+        ln(1,N.B4),  ln(0,N.A4),  ln(0,N.G4),  ln(0,N.A4),
+        ln(1,N.B4),  ln(1,N.D5),  ln(2,N.E5),  ln(2,N.G5),
+        ln(2,N.A5),  ln(2,N.G5),  ln(2,N.E5),  ln(1,N.D5),
+        ln(1,N.C5),  ln(1,N.B4),  ln(0,N.A4),  ln(0,N.G4),
+        ln(0,N.A4),  ln(1,N.B4),  ln(1,N.D5),  ln(2,N.E5),
+        ln(2,N.G5),  ln(2,N.A5),  ln(2,N.G5),  ln(2,N.E5),
       ];
-      return melodyToLanes(mel, b*2, b*0.5);
+      return melodyToLanes(mel, b*2, b*0.5, 31);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -532,18 +536,16 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/138;
-      // Acid House lead - syncopated, bouncy
+      // Acid House - C minor pentatonic stabs, syncopated
       const mel = [
-        // Riff A - C minor pentatonic
-        N.C5,N.C5,N.Eb5,N.C5,  N.Bb4,N.C5,N.G4,N.C5,
-        // Riff B - higher
-        N.G5,N.Eb5,N.G5,N.Bb5, N.G5,N.Eb5,N.C5,N.Bb4,
-        // Riff C - descend
-        N.Ab4,N.Bb4,N.C5,N.Eb5,N.G5,N.Eb5,N.C5,N.Ab4,
-        // Riff D - peak and drop
-        N.Bb5,N.G5,N.Eb5,N.C5, N.G4,N.Bb4,N.C5,N.Eb5,
-        // Riff E - resolve
-        N.G5,N.F5,N.Eb5,N.C5,  N.Bb4,N.G4,N.Eb4,N.C4
+        ln(0,N.C5),  ln(0,N.C5),  ln(1,N.Eb5), ln(0,N.C5),
+        ln(0,N.Bb4), ln(1,N.C5),  ln(0,N.G4),  ln(1,N.C5),
+        ln(2,N.G5),  ln(2,N.Eb5), ln(2,N.G5),  ln(2,N.Bb5),
+        ln(2,N.G5),  ln(1,N.Eb5), ln(1,N.C5),  ln(0,N.Bb4),
+        ln(0,N.Ab4), ln(0,N.Bb4), ln(1,N.C5),  ln(1,N.Eb5),
+        ln(2,N.G5),  ln(2,N.Eb5), ln(1,N.C5),  ln(0,N.Ab4),
+        ln(2,N.Bb5), ln(2,N.G5),  ln(2,N.Eb5), ln(1,N.C5),
+        ln(0,N.Bb4), ln(0,N.G4),  ln(0,N.Eb4), ln(0,N.C4),
       ];
       return melodyToLanes(mel, b*1, b*0.5, 31);
     },
@@ -580,18 +582,16 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/160;
-      // Jungle/DnB - fast stabs, Amen break feel
+      // Jungle/DnB - fast 16th stabs C minor
       const mel = [
-        // Stab A
-        N.C5,N.G5,N.C5,N.Eb5,  N.G5,N.Bb5,N.G5,N.Eb5,
-        // Stab B - syncopated
-        N.C5,N.Bb4,N.C5,N.G5,  N.Eb5,N.C5,N.Bb4,N.G4,
-        // Rise
-        N.G4,N.Bb4,N.C5,N.Eb5, N.G5,N.Bb5,N.C5,N.Eb5,
-        // Fall
-        N.Bb5,N.G5,N.Eb5,N.C5, N.Bb4,N.G4,N.Eb4,N.C4,
-        // Resolve
-        N.C5,N.Eb5,N.G5,N.C5,  N.G5,N.Eb5,N.C5,N.Bb4
+        ln(0,N.C5),  ln(2,N.G5),  ln(0,N.C5),  ln(1,N.Eb5),
+        ln(2,N.G5),  ln(2,N.Bb5), ln(2,N.G5),  ln(1,N.Eb5),
+        ln(0,N.C5),  ln(0,N.Bb4), ln(0,N.C5),  ln(2,N.G5),
+        ln(1,N.Eb5), ln(0,N.C5),  ln(0,N.Bb4), ln(0,N.G4),
+        ln(0,N.G4),  ln(1,N.Bb4), ln(0,N.C5),  ln(1,N.Eb5),
+        ln(2,N.G5),  ln(2,N.Bb5), ln(2,N.C5),  ln(2,N.Eb5),
+        ln(2,N.Bb5), ln(2,N.G5),  ln(1,N.Eb5), ln(1,N.C5),
+        ln(0,N.Bb4), ln(0,N.G4),  ln(0,N.Eb4), ln(0,N.C4),
       ];
       return melodyToLanes(mel, b*1, b*0.25, 31);
     },
