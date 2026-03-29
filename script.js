@@ -142,6 +142,29 @@ const AudioEngine = (() => {
   return { init, resume, now, hitMelody, hitMiss, playBackground, stopAll };
 })();
 
+// ===== MELODY → 3 LANES HELPER =====
+// Takes a flat melody array and distributes into 3 lanes (Low/Mid/High)
+// by splitting the melody into thirds by pitch range
+function melodyToLanes(melNotes, startTime, stepTime) {
+  // Sort a copy by freq to find pitch ranges
+  const freqs = melNotes.map(f => typeof f === 'number' ? f : f.freq).filter(Boolean);
+  const sorted = [...freqs].sort((a,b) => a-b);
+  const lo = sorted[Math.floor(sorted.length * 0.33)];
+  const hi = sorted[Math.floor(sorted.length * 0.67)];
+
+  const notes = [];
+  melNotes.forEach((item, i) => {
+    const freq = typeof item === 'number' ? item : item.freq;
+    const t = startTime + i * stepTime;
+    let lane;
+    if (freq <= lo) lane = 0;
+    else if (freq <= hi) lane = 1;
+    else lane = 2;
+    notes.push({ time: t, lane, freq });
+  });
+  return notes;
+}
+
 // ===== SONG DEFINITIONS =====
 // Each note in chart: { time, lane (0=low,1=mid,2=high), freq, instrument }
 // bgDef: function that schedules all background (drums + bass + pads)
@@ -158,42 +181,21 @@ const SONGS = [
     // Full melody chart (Hard = all notes)
     buildMelody() {
       const b = 60/108, tri = b/3;
-      // Classic triplet arpeggio melody - split into Low/Mid/High lanes
-      // Original: E4 Gb4 A4  repeated / D4 Gb4 A4 / C4 E4 A4 / B3 E4 Ab4
-      const phrases = [
-        // [low, mid, high] per triplet group
-        [N.A3, N.E4, N.A4],   // bar 1
-        [N.A3, N.E4, N.A4],
-        [N.G3, N.D4, N.G4],   // bar 2 (relative)
-        [N.G3, N.D4, N.B4],
-        [N.F3, N.C4, N.A4],   // bar 3
-        [N.F3, N.C4, N.A4],
-        [N.E3, N.B3, N.Ab4],  // bar 4
-        [N.E3, N.B3, N.G4],
+      // Moonlight triplet melody - full sequence
+      const mel = [
+        N.A4,N.E4,N.A4, N.A4,N.E4,N.A4, N.A4,N.E4,N.A4, N.A4,N.E4,N.A4,
+        N.B4,N.D4,N.G4, N.B4,N.D4,N.G4, N.B4,N.D4,N.G4, N.B4,N.D4,N.G4,
+        N.A4,N.C4,N.E4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4,
+        N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,N.Ab4,N.B3,N.E4,
+        N.G4,N.B3,N.D4, N.G4,N.B3,N.D4, N.A4,N.C4,N.E4, N.A4,N.C4,N.E4,
+        N.Gb4,N.A3,N.D4,N.Gb4,N.A3,N.D4,N.E4,N.A3,N.C4, N.E4,N.A3,N.C4
       ];
-      const notes = [];
-      let bar = 0;
-      for (let rep = 0; rep < 4; rep++) {
-        phrases.forEach((ph, pi) => {
-          const t = b * 2 + (bar) * b * 4 + (pi % 2) * b * 2;
-          // High note every triplet
-          notes.push({ time: t,          lane: 2, freq: ph[2] });
-          notes.push({ time: t + tri,    lane: 2, freq: ph[1] });
-          notes.push({ time: t + tri*2,  lane: 2, freq: ph[2] });
-          // Mid note on beat
-          notes.push({ time: t,          lane: 1, freq: ph[1] });
-          notes.push({ time: t + tri*3,  lane: 1, freq: ph[1] });
-          // Low note (bass melody) - less frequent
-          notes.push({ time: t,          lane: 0, freq: ph[0] });
-          if (pi % 2 === 1) bar++;
-        });
-      }
-      return notes.sort((a, b2) => a.time - b2.time);
+      return melodyToLanes(mel, b*2, tri);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
       const tri = beat / 3;
-      const bassLine = [N.A2, N.A2, N.G2, N.G2, N.F2||N.G2, N.F2||N.G2, N.E2||N.G2, N.E2||N.G2];
+      const bassLine = [N.A2, N.A2, N.G2, N.G2, N.F3, N.F3, N.E3, N.E3];
       for (let i = 0; i < bars; i++) {
         const t = startT + i * beat * 4;
         // Soft kick on 1 & 3
@@ -228,28 +230,15 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/116;
-      // Canon melody - 3 voices split by lane
-      const melHigh = [N.Gb4,N.E4,N.D4,N.Gb4,N.A4,N.Gb4,N.E4,N.D4,
-                       N.A4,N.B4,N.A4,N.Gb4,N.E4,N.Gb4,N.A4,N.B4,
-                       N.D5,N.C5,N.B4,N.A4,N.Gb4,N.A4,N.B4,N.C5,
-                       N.B4,N.A4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.A4];
-      const melMid  = [N.D4,N.C4,N.B3,N.D4,N.Gb4,N.D4,N.C4,N.B3,
-                       N.Gb4,N.G4,N.Gb4,N.D4,N.C4,N.D4,N.Gb4,N.G4,
-                       N.A4,N.G4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.G4,
-                       N.G4,N.Gb4,N.D4,N.C4,N.B3,N.C4,N.D4,N.E4];
-      const melLow  = [N.D3,N.A2,N.B2,N.Gb2,N.G2,N.D3,N.G2,N.A2,
-                       N.D3,N.A2,N.B2,N.Gb2,N.G2,N.D3,N.G2,N.A2,
-                       N.D3,N.A2,N.B2,N.Gb2,N.G2,N.D3,N.G2,N.A2,
-                       N.D3,N.A2,N.B2,N.Gb2,N.G2,N.D3,N.G2,N.A2];
-      const notes = [];
-      const total = melHigh.length;
-      for (let i = 0; i < total; i++) {
-        const t = b * 2 + i * b * 0.5;
-        notes.push({ time: t,        lane: 2, freq: melHigh[i] });
-        notes.push({ time: t + b*0.25, lane: 1, freq: melMid[i] });
-        if (i % 2 === 0) notes.push({ time: t, lane: 0, freq: melLow[i] });
-      }
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.Gb4,N.E4,N.D4,N.Gb4,N.A4,N.Gb4,N.E4,N.D4,
+        N.A4,N.B4,N.A4,N.Gb4,N.E4,N.Gb4,N.A4,N.B4,
+        N.D5,N.C5,N.B4,N.A4,N.Gb4,N.A4,N.B4,N.C5,
+        N.B4,N.A4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.A4,
+        N.D5,N.E5,N.Gb5||N.G5,N.A5,N.Gb5||N.G5,N.E5,N.D5,N.C5,
+        N.B4,N.A4,N.G4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4
+      ];
+      return melodyToLanes(mel, b*2, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -277,21 +266,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/72;
-      // Bach Air melody, 3 octave layers
-      const hi = [N.B4,N.A4,N.Gb4,N.E4, N.D4,N.E4,N.Gb4,N.A4, N.B4,N.C5,N.B4,N.A4, N.G4,N.Gb4,N.E4,N.D4,
-                  N.C5,N.B4,N.A4,N.G4,  N.Gb4,N.G4,N.A4,N.B4,  N.E5,N.D5,N.C5,N.B4, N.A4,N.B4,N.C5,N.D5];
-      const mid = [N.Gb4,N.E4,N.D4,N.C4, N.B3,N.C4,N.D4,N.E4, N.Gb4,N.G4,N.Gb4,N.E4, N.D4,N.C4,N.B3,N.A3,
-                   N.G4,N.Gb4,N.E4,N.D4, N.C4,N.D4,N.E4,N.Gb4, N.B4,N.A4,N.G4,N.Gb4,  N.E4,N.Gb4,N.G4,N.A4];
-      const lo  = [N.D3,N.C3,N.B2,N.A2,  N.G2,N.A2,N.B2,N.C3,  N.D3,N.E3,N.D3,N.C3,   N.B2,N.A2,N.G2,N.Gb2,
-                   N.E3,N.D3,N.C3,N.B2,   N.A2,N.B2,N.C3,N.D3,  N.G3,N.Gb3,N.E3,N.D3,  N.C3,N.D3,N.E3,N.Gb3];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b * 3 + i * b;
-        notes.push({ time: t,         lane: 2, freq: f });
-        notes.push({ time: t + b*0.5, lane: 1, freq: mid[i] });
-        if (i % 2 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.B4,N.A4,N.Gb4,N.E4,N.D4,N.E4,N.Gb4,N.A4,
+        N.B4,N.C5,N.B4,N.A4,N.G4,N.Gb4,N.E4,N.D4,
+        N.C5,N.B4,N.A4,N.G4,N.Gb4,N.G4,N.A4,N.B4,
+        N.E5,N.D5,N.C5,N.B4,N.A4,N.B4,N.C5,N.D5,
+        N.E5,N.Gb5||N.G5,N.E5,N.D5,N.C5,N.B4,N.A4,N.G4
+      ];
+      return melodyToLanes(mel, b*3, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -326,20 +308,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/132;
-      const hi = [N.D5,N.C5,N.D5,N.Eb5,N.D5,N.C5,N.Bb4,N.A4, N.Bb4,N.C5,N.Bb4,N.A4,N.G4,N.Gb4,N.G4,N.A4,
-                  N.D5,N.Eb5,N.D5,N.C5, N.Bb4,N.A4,N.Bb4,N.C5, N.D5,N.C5,N.Bb4,N.A4,N.G4,N.A4,N.Bb4,N.C5];
-      const mid = [N.A4,N.G4,N.A4,N.Bb4,N.A4,N.G4,N.F4,N.E4,  N.F4,N.G4,N.F4,N.E4,N.D4,N.C4,N.D4,N.E4,
-                   N.A4,N.Bb4,N.A4,N.G4, N.F4,N.E4,N.F4,N.G4,  N.A4,N.G4,N.F4,N.E4,N.D4,N.E4,N.F4,N.G4];
-      const lo  = [N.D3,N.A2,N.D3,N.G3,N.D3,N.A2,N.D3,N.A2, N.Bb2,N.G2,N.Bb2,N.A2,N.D3,N.A2,N.D3,N.A2,
-                   N.D3,N.G3,N.D3,N.A2, N.Bb2,N.A2,N.Bb2,N.G2, N.D3,N.A2,N.Bb2,N.A2,N.G2,N.A2,N.Bb2,N.A2];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b * 1.5 + i * b * 0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        notes.push({ time: t + b*0.25, lane: 1, freq: mid[i] });
-        if (i % 2 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.D5,N.C5,N.D5,N.Eb5,N.D5,N.C5,N.Bb4,N.A4,
+        N.Bb4,N.C5,N.Bb4,N.A4,N.G4,N.Gb4,N.G4,N.A4,
+        N.D5,N.Eb5,N.D5,N.C5,N.Bb4,N.A4,N.Bb4,N.C5,
+        N.D5,N.C5,N.Bb4,N.A4,N.G4,N.A4,N.Bb4,N.C5,
+        N.D5,N.F5,N.E5,N.D5,N.C5,N.Bb4,N.A4,N.G4
+      ];
+      return melodyToLanes(mel, b*1.5, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -365,25 +341,15 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/126;
-      // da-da-da-DUM split across lanes
-      // High: lead motif, Mid: inner voices, Low: bass motif
-      const hi = [N.G4,N.G4,N.G4,N.Eb4, N.F4,N.F4,N.F4,N.D4, N.Eb4,N.Eb4,N.Eb4,N.C4,
-                  N.G4,N.G4,N.G4,N.Eb4, N.Ab4,N.Ab4,N.Ab4,N.F4, N.G4,N.G4,N.F4,N.Eb4];
-      const mid = [N.Eb4,N.Eb4,N.Eb4,N.C4, N.D4,N.D4,N.D4,N.Bb3, N.C4,N.C4,N.C4,N.G3,
-                   N.Eb4,N.Eb4,N.Eb4,N.C4, N.F4,N.F4,N.F4,N.D4,  N.Eb4,N.Eb4,N.D4,N.C4];
-      const lo  = [N.G3,N.G3,N.G3,N.Eb3,  N.F3,N.F3,N.F3,N.D3,   N.C3,N.C3,N.C3,N.G2,
-                   N.G3,N.G3,N.G3,N.Eb3,  N.Ab3,N.Ab3,N.Ab3,N.F3, N.Eb3,N.Eb3,N.D3,N.C3];
-      const times = [0,b/2,b,b*1.5, b*3.5,b*4,b*4.5,b*5, b*7,b*7.5,b*8,b*8.5, b*10.5,b*11,b*11.5,b*12,
-                     b*14,b*14.5,b*15,b*15.5, b*17.5,b*18,b*18.5,b*19];
-      const notes = [];
-      const base = b * 2;
-      hi.forEach((f, i) => {
-        const t = base + times[i % times.length] + Math.floor(i / times.length) * b * 21;
-        notes.push({ time: t,        lane: 2, freq: f });
-        notes.push({ time: t+b*0.1,  lane: 1, freq: mid[i] });
-        if (i % 3 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      // da-da-da-DUM motif, evenly spaced for lane detection
+      const mel = [
+        N.G4,N.G4,N.G4,N.Eb4, N.F4,N.F4,N.F4,N.D4,
+        N.Eb4,N.Eb4,N.Eb4,N.C4, N.G4,N.G4,N.G4,N.Eb4,
+        N.Ab4,N.Ab4,N.Ab4,N.F4, N.G4,N.G4,N.F4,N.Eb4,
+        N.G4,N.G4,N.G4,N.Eb4, N.F4,N.F4,N.F4,N.D4,
+        N.Eb4,N.Eb4,N.Eb4,N.C4, N.Ab4,N.Ab4,N.G4,N.F4
+      ];
+      return melodyToLanes(mel, b*2, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -415,25 +381,18 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/130;
-      // 3 melody layers in F minor
-      const hi = [N.F4,N.Ab4,N.Bb4,N.C5, N.Bb4,N.Ab4,N.F4,N.Eb4, N.F4,N.Ab4,N.Bb4,N.C5, N.Eb5,N.C5,N.Bb4,N.Ab4,
-                  N.F4,N.Eb4,N.F4,N.Ab4, N.Bb4,N.C5,N.Bb4,N.Ab4, N.G4,N.Ab4,N.Bb4,N.C5, N.F5,N.Eb5,N.C5,N.Bb4];
-      const mid = [N.C4,N.Eb4,N.F4,N.G4, N.F4,N.Eb4,N.C4,N.Bb3, N.C4,N.Eb4,N.F4,N.G4, N.Bb4,N.G4,N.F4,N.Eb4,
-                   N.C4,N.Bb3,N.C4,N.Eb4,N.F4,N.G4,N.F4,N.Eb4,  N.D4,N.Eb4,N.F4,N.G4, N.C5,N.Bb4,N.G4,N.F4];
-      const lo  = [N.F3,N.F3,N.Bb3,N.F3, N.Eb3,N.F3,N.Bb3,N.Eb3, N.F3,N.F3,N.Bb3,N.F3, N.Eb3,N.C4,N.Bb3,N.Ab3,
-                   N.F3,N.Eb3,N.F3,N.F3, N.Bb3,N.C4,N.Bb3,N.Ab3, N.Bb3,N.Ab3,N.Bb3,N.C4,N.F4,N.Eb4,N.C4,N.Bb3];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b*2 + i*b*0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        if (i % 2 === 0) notes.push({ time: t, lane: 1, freq: mid[i] });
-        if (i % 4 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.F4,N.Ab4,N.Bb4,N.C5,N.Bb4,N.Ab4,N.F4,N.Eb4,
+        N.F4,N.Ab4,N.Bb4,N.C5,N.Eb5,N.C5,N.Bb4,N.Ab4,
+        N.F4,N.Eb4,N.F4,N.Ab4,N.Bb4,N.C5,N.Bb4,N.Ab4,
+        N.G4,N.Ab4,N.Bb4,N.C5,N.F5,N.Eb5,N.C5,N.Bb4,
+        N.F5,N.Eb5,N.C5,N.Bb4,N.Ab4,N.Bb4,N.C5,N.Eb5
+      ];
+      return melodyToLanes(mel, b*2, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
-      const bassLine = [N.F2||N.F3,N.F2||N.F3,N.Ab2,N.F2||N.F3, N.Eb2||N.Eb3,N.F2||N.F3,N.Ab2,N.Bb2];
+      const bassLine = [N.F3,N.F3,N.Ab2,N.F3, N.Eb3,N.F3,N.Ab2,N.Bb2];
       const chords   = [[N.F3,N.Ab3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Db3||N.D3,N.F3,N.Ab3],[N.Eb3,N.G3,N.Bb3]];
       for (let i = 0; i < bars; i++) {
         const t = startT + i * beat * 4;
@@ -465,21 +424,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/121;
-      // Iconic repetitive hook in Am - 3 pitch layers
-      const hi = [N.A4,N.A4,N.A4,N.G4, N.A4,N.A4,N.E4,N.A4, N.A4,N.A4,N.A4,N.G4, N.A4,N.C5,N.E5,N.A5,
-                  N.G4,N.A4,N.G4,N.E4, N.A4,N.G4,N.E4,N.D4, N.E4,N.G4,N.A4,N.G4, N.E4,N.D4,N.E4,N.A4];
-      const mid = [N.E4,N.E4,N.E4,N.D4, N.E4,N.E4,N.B3,N.E4, N.E4,N.E4,N.E4,N.D4, N.E4,N.G4,N.B4,N.E5,
-                   N.D4,N.E4,N.D4,N.B3, N.E4,N.D4,N.B3,N.A3, N.B3,N.D4,N.E4,N.D4, N.B3,N.A3,N.B3,N.E4];
-      const lo  = [N.A3,N.A3,N.A3,N.G3, N.A3,N.A3,N.E3,N.A3, N.A3,N.A3,N.A3,N.G3, N.A3,N.C4,N.E4,N.A4,
-                   N.G3,N.A3,N.G3,N.E3, N.A3,N.G3,N.E3,N.D3, N.E3,N.G3,N.A3,N.G3, N.E3,N.D3,N.E3,N.A3];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b*2 + i*b*0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        if (i % 2 === 0) notes.push({ time: t, lane: 1, freq: mid[i] });
-        if (i % 4 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.A4,N.A4,N.A4,N.G4,N.A4,N.A4,N.E4,N.A4,
+        N.A4,N.A4,N.A4,N.G4,N.A4,N.C5,N.E5,N.A5,
+        N.G4,N.A4,N.G4,N.E4,N.A4,N.G4,N.E4,N.D4,
+        N.E4,N.G4,N.A4,N.G4,N.E4,N.D4,N.E4,N.A4,
+        N.C5,N.E5,N.A5,N.E5,N.C5,N.A4,N.G4,N.E4
+      ];
+      return melodyToLanes(mel, b*2, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -515,20 +467,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/123;
-      const hi = [N.D5,N.E5,N.Gb5||N.G5,N.A5, N.Gb5||N.G5,N.E5,N.D5,N.C5, N.B4,N.A4,N.G4,N.A4, N.B4,N.D5,N.E5,N.Gb5||N.G5,
-                  N.A5,N.Gb5||N.G5,N.E5,N.D5, N.C5,N.B4,N.A4,N.G4,         N.A4,N.B4,N.D5,N.E5, N.Gb5||N.G5,N.A5,N.Gb5||N.G5,N.E5];
-      const mid = [N.A4,N.B4,N.D5,N.E5, N.D5,N.B4,N.A4,N.G4, N.Gb4||N.G4,N.E4,N.D4,N.E4, N.Gb4||N.G4,N.A4,N.B4,N.D5,
-                   N.E5,N.D5,N.B4,N.A4, N.G4,N.Gb4||N.G4,N.E4,N.D4,        N.E4,N.Gb4||N.G4,N.A4,N.B4, N.D5,N.E5,N.D5,N.B4];
-      const lo  = [N.D4,N.E4,N.Gb4||N.G4,N.A4, N.Gb4||N.G4,N.E4,N.D4,N.C4, N.B3,N.A3,N.G3,N.A3, N.B3,N.D4,N.E4,N.Gb4||N.G4,
-                   N.A4,N.Gb4||N.G4,N.E4,N.D4, N.C4,N.B3,N.A3,N.G3,         N.A3,N.B3,N.D4,N.E4, N.Gb4||N.G4,N.A4,N.Gb4||N.G4,N.E4];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b*2 + i*b*0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        if (i % 2 === 0) notes.push({ time: t, lane: 1, freq: mid[i] });
-        if (i % 4 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.D5,N.E5,N.G5,N.A5,N.G5,N.E5,N.D5,N.C5,
+        N.B4,N.A4,N.G4,N.A4,N.B4,N.D5,N.E5,N.G5,
+        N.A5,N.G5,N.E5,N.D5,N.C5,N.B4,N.A4,N.G4,
+        N.A4,N.B4,N.D5,N.E5,N.G5,N.A5,N.G5,N.E5,
+        N.D5,N.E5,N.G5,N.A5,N.B5||N.B4,N.A5,N.G5,N.E5
+      ];
+      return melodyToLanes(mel, b*2, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -560,20 +506,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/138;
-      const hi = [N.C5,N.Eb5,N.G5,N.Bb5, N.C5,N.G4,N.Eb4,N.C4, N.C5,N.Eb5,N.G5,N.Bb5, N.Ab5,N.G5,N.Eb5,N.C5,
-                  N.C5,N.Bb4,N.Ab4,N.G4, N.F4,N.G4,N.Ab4,N.Bb4, N.C5,N.Eb5,N.F5,N.Eb5, N.C5,N.Bb4,N.G4,N.C5];
-      const mid = [N.G4,N.Bb4,N.D5,N.F5, N.G4,N.D4,N.Bb3,N.G3, N.G4,N.Bb4,N.D5,N.F5, N.Eb5,N.D5,N.Bb4,N.G4,
-                   N.G4,N.F4,N.Eb4,N.D4, N.C4,N.D4,N.Eb4,N.F4, N.G4,N.Bb4,N.C5,N.Bb4, N.G4,N.F4,N.D4,N.G4];
-      const lo  = [N.C4,N.Eb4,N.G4,N.Bb4,N.C4,N.G3,N.Eb3,N.C3, N.C4,N.Eb4,N.G4,N.Bb4, N.Ab4,N.G4,N.Eb4,N.C4,
-                   N.C4,N.Bb3,N.Ab3,N.G3,N.F3,N.G3,N.Ab3,N.Bb3, N.C4,N.Eb4,N.F4,N.Eb4, N.C4,N.Bb3,N.G3,N.C4];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b*1 + i*b*0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        if (i % 2 === 0) notes.push({ time: t, lane: 1, freq: mid[i] });
-        if (i % 4 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.G4,N.Eb4,N.C4,
+        N.C5,N.Eb5,N.G5,N.Bb5,N.Ab5,N.G5,N.Eb5,N.C5,
+        N.C5,N.Bb4,N.Ab4,N.G4,N.F4,N.G4,N.Ab4,N.Bb4,
+        N.C5,N.Eb5,N.F5,N.Eb5,N.C5,N.Bb4,N.G4,N.C5,
+        N.Eb5,N.G5,N.Bb5,N.G5,N.Eb5,N.C5,N.Bb4,N.G4
+      ];
+      return melodyToLanes(mel, b*1, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -608,20 +548,14 @@ const SONGS = [
 
     buildMelody() {
       const b = 60/160;
-      const hi = [N.C5,N.Eb5,N.G5,N.Bb5, N.C5,N.G4,N.Eb4,N.C4, N.G5,N.F5,N.Eb5,N.C5, N.Bb4,N.C5,N.Eb5,N.G5,
-                  N.C5,N.Eb5,N.G5,N.Bb5, N.C6||N.C5,N.Bb5,N.G5,N.Eb5, N.C5,N.Bb4,N.G4,N.Eb4, N.C4,N.Eb4,N.G4,N.C5];
-      const mid = [N.G4,N.Bb4,N.D5,N.F5, N.G4,N.D4,N.Bb3,N.G3, N.D5,N.C5,N.Bb4,N.G4, N.F4,N.G4,N.Bb4,N.D5,
-                   N.G4,N.Bb4,N.D5,N.F5, N.G5,N.F5,N.D5,N.Bb4,  N.G4,N.F4,N.D4,N.Bb3, N.G3,N.Bb3,N.D4,N.G4];
-      const lo  = [N.C4,N.Eb4,N.G4,N.Bb4,N.C4,N.G3,N.Eb3,N.C3, N.G4,N.F4,N.Eb4,N.C4, N.Bb3,N.C4,N.Eb4,N.G4,
-                   N.C4,N.Eb4,N.G4,N.Bb4,N.C5,N.Bb4,N.G4,N.Eb4,  N.C4,N.Bb3,N.G3,N.Eb3,N.C3,N.Eb3,N.G3,N.C4];
-      const notes = [];
-      hi.forEach((f, i) => {
-        const t = b*1 + i*b*0.5;
-        notes.push({ time: t, lane: 2, freq: f });
-        if (i % 2 === 0) notes.push({ time: t, lane: 1, freq: mid[i] });
-        if (i % 4 === 0) notes.push({ time: t, lane: 0, freq: lo[i] });
-      });
-      return notes.sort((a, b2) => a.time - b2.time);
+      const mel = [
+        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.G4,N.Eb4,N.C4,
+        N.G5,N.F5,N.Eb5,N.C5,N.Bb4,N.C5,N.Eb5,N.G5,
+        N.C5,N.Eb5,N.G5,N.Bb5,N.C5,N.Bb5,N.G5,N.Eb5,
+        N.C5,N.Bb4,N.G4,N.Eb4,N.C4,N.Eb4,N.G4,N.C5,
+        N.G5,N.Bb5,N.C5,N.Bb5,N.G5,N.Eb5,N.C5,N.G4
+      ];
+      return melodyToLanes(mel, b*1, b*0.5);
     },
 
     bgDef(ctx, master, nodes, startT, bars, beat, noiseNode, kick, snare, hat, clap, bassNote, pad, osc) {
@@ -649,21 +583,35 @@ const SONGS = [
 ];
 
 // ===== DIFFICULTY FILTER =====
-// All 3 lanes are melody. Easy = sparse, Normal = medium, Hard = full
 function filterChart(rawChart, difficulty) {
   if (difficulty === 'hard') return rawChart;
 
-  const byLane = [[], [], []];
-  rawChart.forEach(n => byLane[n.lane].push(n));
+  // Sort by time first
+  const sorted = [...rawChart].sort((a, b) => a.time - b.time);
 
   if (difficulty === 'easy') {
-    // High lane only, every 3rd note → very sparse, one note at a time
-    return byLane[2].filter((n, i) => i % 3 === 0);
+    // Keep every 4th note across all lanes - very sparse
+    // Ensure no two notes at same time
+    const result = [];
+    let lastTime = -1;
+    sorted.forEach((n, i) => {
+      if (i % 4 === 0 && n.time - lastTime > 0.2) {
+        result.push(n);
+        lastTime = n.time;
+      }
+    });
+    return result;
   } else {
-    // Normal: high every other, mid every 3rd, no low
-    const hi  = byLane[2].filter((n, i) => i % 2 === 0);
-    const mid = byLane[1].filter((n, i) => i % 3 === 0);
-    return [...hi, ...mid].sort((a, b) => a.time - b.time);
+    // Normal: every 2nd note, no simultaneous notes
+    const result = [];
+    let lastTime = -1;
+    sorted.forEach((n, i) => {
+      if (i % 2 === 0 && n.time - lastTime > 0.1) {
+        result.push(n);
+        lastTime = n.time;
+      }
+    });
+    return result;
   }
 }
 
