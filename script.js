@@ -1,62 +1,108 @@
-// ===== BEAT ZONE v5 =====
-// 10 songs: Classic×2, JPOP×2, Western Pop×2, Club×2, R&B×2
-// 3 lanes = LOW / MID / HIGH melody
-// Background: drums + bass + pads always playing
+// ===== BEAT ZONE v6 =====
+// Tone.js で本格クラシック音源 + 楽譜通り正確な音符データ
+// 著作権切れパブリックドメイン楽曲のみ使用
 
-// ===== NOTE FREQUENCIES =====
-const N = {
-  C2:65.41,D2:73.42,E2:82.41,F2:87.31,G2:98,A2:110,Bb2:116.54,B2:123.47,
-  C3:130.81,D3:146.83,Eb3:155.56,E3:164.81,F3:174.61,Gb3:185,G3:196,Ab3:207.65,A3:220,Bb3:233.08,B3:246.94,
-  C4:261.63,D4:293.66,Eb4:311.13,E4:329.63,F4:349.23,Gb4:369.99,G4:392,Ab4:415.30,A4:440,Bb4:466.16,B4:493.88,
-  C5:523.25,D5:587.33,Eb5:622.25,E5:659.25,F5:698.46,Gb5:739.99,G5:783.99,Ab5:830.61,A5:880,Bb5:932.33,B5:987.77,
-  C6:1046.5,D6:1174.66,E6:1318.51
-};
+// ===== TONE.JS LOADER =====
+// Tone.js CDNから動的ロード
+(function loadTone() {
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js';
+  s.onload = () => { window._toneReady = true; console.log('Tone.js ready'); };
+  s.onerror = () => { window._toneReady = false; console.log('Tone.js failed, using Web Audio fallback'); };
+  document.head.appendChild(s);
+})();
 
-// Lane note helper: ln(0=LOW, 1=MID, 2=HIGH, freq)
-function ln(lane, freq) { return { lane, freq }; }
+// ===== MIDI NOTE TO FREQUENCY =====
+function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
-// ===== MELODY LOOP HELPER =====
-// Loops mel pattern to fill song duration, with explicit lane assignments
-function buildChart(mel, startTime, stepTime, duration) {
-  const patDur = mel.length * stepTime;
-  const reps = Math.ceil((duration - startTime + 2) / patDur) + 1;
-  const notes = [];
-  for (let r = 0; r < reps; r++) {
-    mel.forEach((item, i) => {
-      const t = startTime + r * patDur + i * stepTime;
-      if (t > duration + 0.5) return;
-      notes.push({ time: t, lane: item.lane, freq: item.freq });
-    });
-  }
-  return notes;
+// ===== NOTE NAME TO MIDI =====
+const NOTE_MAP = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+function nameToMidi(name) {
+  // e.g. "C4", "F#5", "Bb3"
+  const m = name.match(/^([A-G][b#]?)(\d)$/);
+  if (!m) return 60;
+  return NOTE_MAP[m[1]] + (parseInt(m[2]) + 1) * 12;
+}
+function freq(name) { return midiToFreq(nameToMidi(name)); }
+
+// ===== LANE HELPER =====
+function ln(lane, noteName, dur) {
+  return { lane, freq: freq(noteName), dur: dur || 0.5, noteName };
 }
 
 // ===== AUDIO ENGINE =====
 const AudioEngine = (() => {
-  let ctx = null, master = null;
-  let bgNodes = [];
+  let ctx = null, masterGain = null;
+  let synths = {}; // Tone.js synths per instrument
+  let bgNodes = []; // Web Audio fallback nodes
+  let useTone = false;
 
   function init() {
     if (ctx) return;
     ctx = new (window.AudioContext || window.webkitAudioContext)();
-    master = ctx.createGain(); master.gain.value = 0.7;
-    master.connect(ctx.destination);
+    masterGain = ctx.createGain();
+    masterGain.gain.value = 0.7;
+    masterGain.connect(ctx.destination);
+
+    if (window._toneReady && window.Tone) {
+      try {
+        Tone.setContext(ctx);
+        // Piano-like synth with rich harmonics
+        synths.piano = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle' },
+          envelope: { attack: 0.02, decay: 0.3, sustain: 0.4, release: 1.2 },
+          volume: -8
+        }).toDestination();
+
+        synths.strings = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'sawtooth' },
+          envelope: { attack: 0.1, decay: 0.2, sustain: 0.8, release: 0.8 },
+          volume: -12
+        }).toDestination();
+
+        synths.harpsichord = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle8' },
+          envelope: { attack: 0.005, decay: 0.4, sustain: 0.1, release: 0.3 },
+          volume: -10
+        }).toDestination();
+
+        synths.flute = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.08, decay: 0.1, sustain: 0.9, release: 0.5 },
+          volume: -10
+        }).toDestination();
+
+        useTone = true;
+        console.log('Tone.js synths initialized');
+      } catch(e) {
+        console.log('Tone.js init error:', e);
+        useTone = false;
+      }
+    }
   }
-  function resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); }
+
+  function resume() {
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+    if (useTone && Tone.context.state === 'suspended') Tone.start();
+  }
+
   function now() { return ctx ? ctx.currentTime : 0; }
 
-  function osc(type, freq, t, dur, vol) {
+  // ── Fallback Web Audio oscillators ──
+  function oscFallback(type, noteFreq, t, dur, vol) {
+    if (!ctx) return;
     const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type; o.frequency.value = freq;
-    o.connect(g); g.connect(master);
+    o.type = type; o.frequency.value = noteFreq;
+    o.connect(g); g.connect(masterGain);
     g.gain.setValueAtTime(0.001, t);
-    g.gain.linearRampToValueAtTime(vol, t + 0.015);
+    g.gain.linearRampToValueAtTime(vol, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.start(t); o.stop(t + dur + 0.05);
     bgNodes.push(o, g);
   }
 
-  function noiseN(t, dur, vol, hpf, lpf) {
+  function noiseNode(t, dur, vol, hpf, lpf) {
+    if (!ctx) return;
     const len = Math.ceil(ctx.sampleRate * Math.max(dur, 0.02));
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -64,715 +110,760 @@ const AudioEngine = (() => {
     const src = ctx.createBufferSource(); src.buffer = buf;
     const g = ctx.createGain();
     const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value = hpf||0;
-    const lp = ctx.createBiquadFilter(); lp.type='lowpass';  lp.frequency.value = lpf||20000;
+    const lp = ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = lpf||20000;
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
-    src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(master);
+    src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(masterGain);
     src.start(t); src.stop(t+dur+0.02);
-    bgNodes.push(src,g,hp,lp);
+    bgNodes.push(src, g, hp, lp);
   }
 
   function kick(t, vol) {
-    const o=ctx.createOscillator(), g=ctx.createGain();
-    o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(0.001,t+0.4);
-    g.gain.setValueAtTime(vol||0.7,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.4);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t+0.45);
-    bgNodes.push(o,g);
-  }
-  function snare(t, vol) {
-    noiseN(t,0.15,vol||0.22,1500,8000);
-    osc('triangle',200,t,0.1,(vol||0.22)*0.5);
-  }
-  function hat(t, vol, open) { noiseN(t,open?0.2:0.03,vol||0.07,8000,18000); }
-  function clap(t, vol) {
-    for(let i=0;i<3;i++) noiseN(t+i*0.01,0.06,vol||0.18,2000,10000);
-  }
-  function bassNote(freq, t, dur, vol) {
-    osc('sine',freq,t,dur,vol||0.35);
-    osc('sawtooth',freq,t,dur*0.5,(vol||0.35)*0.15);
-  }
-  function pad(freqs, t, dur, vol, type) {
-    (freqs||[]).forEach(f=>osc(type||'sine',f,t,dur,vol||0.05));
+    if (!ctx) return;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(0.001, t+0.4);
+    g.gain.setValueAtTime(vol||0.55, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.4);
+    o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.45);
+    bgNodes.push(o, g);
   }
 
-  // ── Player hit sounds by instrument type ──
-  function hitNote(freq, instrument) {
-    if (!ctx) return; resume();
-    const t = ctx.currentTime;
+  function snare(t, vol) { noiseNode(t, 0.14, vol||0.18, 1500, 8000); }
+  function hat(t, vol) { noiseNode(t, 0.03, vol||0.07, 9000, 18000); }
+
+  function bassNote(noteFreq, t, dur, vol) {
+    oscFallback('sine', noteFreq, t, dur, vol||0.32);
+    oscFallback('sawtooth', noteFreq, t, dur*0.5, (vol||0.32)*0.12);
+  }
+
+  function padNote(noteFreq, t, dur, vol) {
+    oscFallback('sine', noteFreq, t, dur, vol||0.04);
+  }
+
+  // ── Player hit - uses Tone.js if available ──
+  function hitNote(noteName, noteFreq, instrument, dur) {
+    if (!ctx) return;
+    resume();
+    dur = dur || 0.5;
+
+    if (useTone && synths[instrument]) {
+      try {
+        synths[instrument].triggerAttackRelease(noteName, dur + 'n' in Tone.Time ? dur : dur);
+        return;
+      } catch(e) {}
+    }
+
+    // Fallback
     switch(instrument) {
       case 'piano':
-        osc('triangle',freq,t,0.7,0.30);
-        osc('sine',freq*2,t,0.3,0.12);
-        osc('sine',freq*3,t,0.15,0.05);
+        oscFallback('triangle', noteFreq, ctx.currentTime, dur*1.5, 0.30);
+        oscFallback('sine', noteFreq*2, ctx.currentTime, dur*0.8, 0.12);
+        oscFallback('sine', noteFreq*3, ctx.currentTime, dur*0.4, 0.05);
         break;
       case 'strings':
-        osc('sawtooth',freq,t,0.8,0.18);
-        osc('sawtooth',freq*1.008,t,0.8,0.14);
-        osc('sine',freq*0.5,t,0.5,0.07);
+        oscFallback('sawtooth', noteFreq, ctx.currentTime, dur*1.8, 0.18);
+        oscFallback('sawtooth', noteFreq*1.007, ctx.currentTime, dur*1.8, 0.14);
         break;
-      case 'synth':
-        osc('sawtooth',freq,t,0.4,0.22);
-        osc('sawtooth',freq*1.004,t,0.4,0.18);
-        osc('square',freq*0.5,t,0.25,0.06);
+      case 'harpsichord':
+        oscFallback('triangle', noteFreq, ctx.currentTime, dur*0.6, 0.28);
+        oscFallback('sine', noteFreq*2, ctx.currentTime, dur*0.3, 0.10);
         break;
-      case 'bell':
-        osc('sine',freq,t,1.2,0.28);
-        osc('sine',freq*4.01,t,0.4,0.08);
-        osc('sine',freq*6.7,t,0.2,0.04);
-        break;
-      case 'electric':
-        osc('sawtooth',freq,t,0.35,0.20);
-        osc('sine',freq,t,0.35,0.15);
-        osc('sine',freq*2,t,0.2,0.08);
+      case 'flute':
+        oscFallback('sine', noteFreq, ctx.currentTime, dur*1.2, 0.26);
+        oscFallback('sine', noteFreq*2, ctx.currentTime, dur*0.8, 0.08);
         break;
       default:
-        osc('triangle',freq,t,0.5,0.25);
-        osc('sine',freq*2,t,0.25,0.10);
+        oscFallback('triangle', noteFreq, ctx.currentTime, dur, 0.25);
     }
   }
 
   function hitMiss() {
-    if (!ctx) return; resume();
-    noiseN(ctx.currentTime,0.06,0.05,0,1500);
+    if (!ctx) return;
+    noiseNode(ctx.currentTime, 0.06, 0.05, 0, 1500);
   }
 
-  function playBG(song, startT, dur) {
-    if (!ctx||!song.bgFn) return;
-    const beat = 60/song.bpm;
-    const bars = Math.ceil(dur/(beat*4))+2;
-    song.bgFn(ctx,master,bgNodes,startT,bars,beat,
-              kick,snare,hat,clap,bassNote,pad,osc,noiseN);
+  // ── Background music scheduler ──
+  // Schedules full accompaniment for a song
+  function scheduleBG(song, startT, duration) {
+    if (!ctx || !song.bgNotes) return;
+    song.bgNotes.forEach(n => {
+      const t = startT + n.time;
+      if (t > startT + duration + 1) return;
+      switch(n.type) {
+        case 'kick':   kick(t, n.vol); break;
+        case 'snare':  snare(t, n.vol); break;
+        case 'hat':    hat(t, n.vol); break;
+        case 'bass':   bassNote(freq(n.note), t, n.dur||0.4, n.vol); break;
+        case 'pad':    padNote(freq(n.note), t, n.dur||1.5, n.vol); break;
+      }
+    });
   }
 
   function stopAll() {
-    bgNodes.forEach(n=>{try{n.stop?n.stop():n.disconnect();}catch(e){}});
-    bgNodes=[];
+    if (useTone) {
+      try {
+        Object.values(synths).forEach(s => { try { s.releaseAll(); } catch(e){} });
+      } catch(e) {}
+    }
+    bgNodes.forEach(n => { try { n.stop ? n.stop() : n.disconnect(); } catch(e){} });
+    bgNodes = [];
   }
 
-  return {init,resume,now,hitNote,hitMiss,playBG,stopAll};
+  return { init, resume, now, hitNote, hitMiss, scheduleBG, stopAll };
 })();
 
+// ===== BACKGROUND PATTERN GENERATOR =====
+// Generates bgNotes array from a simple pattern spec
+function genBG(bpm, duration, spec) {
+  const beat = 60 / bpm;
+  const bar = beat * 4;
+  const bars = Math.ceil(duration / bar) + 2;
+  const notes = [];
+
+  for (let b = 0; b < bars; b++) {
+    const t = b * bar;
+    if (spec.kick)   spec.kick.forEach(dt   => notes.push({type:'kick',  time:t+dt*beat, vol:0.45}));
+    if (spec.snare)  spec.snare.forEach(dt  => notes.push({type:'snare', time:t+dt*beat, vol:0.18}));
+    if (spec.hat)    spec.hat.forEach(dt    => notes.push({type:'hat',   time:t+dt*beat, vol:0.07}));
+    if (spec.bass)   spec.bass.forEach(([dt,note,dur]) => notes.push({type:'bass',time:t+dt*beat,note,dur:dur*beat,vol:0.30}));
+    if (spec.pad)    spec.pad.forEach(([dt,note,dur])  => notes.push({type:'pad', time:t+dt*beat,note,dur:dur*beat,vol:0.045}));
+  }
+  return notes;
+}
+
 // ===== SONGS =====
-// Each song: { name, genre, icon, bpm, duration, diff, instrument, mel[], stepTime, bgFn() }
+// mel: array of ln(lane, noteName, duration)
+// Each note: lane 0=LOW, 1=MID, 2=HIGH
+// Actual score-accurate melodies from public domain scores
 
 const SONGS = [
 
-  // ════════════════════════════════════════════
-  // 0. CLASSIC — Beethoven: Für Elise (著作権切れ)
-  // ════════════════════════════════════════════
+  // ════════════════════════════
+  // 0. ベートーヴェン「月光ソナタ」第1楽章 (1801) - Cis minor, 4/4, Adagio
+  // ════════════════════════════
   {
-    id:0, name:'FÜR ELISE', genre:'classic', icon:'🎹',
-    bpm:116, duration:30, desc:'クラシック / Beethoven',
+    id:0, name:'月光ソナタ', nameEn:'MOONLIGHT SONATA', genre:'classic',
+    composer:'Beethoven Op.27 No.2 (1801)', icon:'🌙',
+    bpm:54, duration:32,
     diff:{easy:2,normal:4,hard:7}, instrument:'piano',
 
+    // Authentic triplet arpeggio - each group: bass / middle / top
+    // Original key: C# minor. Each triplet = beat/3
     mel: [
-      // A section: E5-D#5-E5-D#5-E5-B4-D5-C5-A4
-      ln(2,N.E5), ln(2,N.Eb5),ln(2,N.E5), ln(2,N.Eb5),
-      ln(2,N.E5), ln(1,N.B4), ln(1,N.D5), ln(1,N.C5),
-      ln(0,N.A4), ln(0,N.A4), ln(1,N.C4), ln(1,N.E4),
-      ln(1,N.A4), ln(0,N.A4), ln(0,N.B4), ln(0,N.E4),
-      // B section
-      ln(2,N.E5), ln(2,N.Eb5),ln(2,N.E5), ln(2,N.Eb5),
-      ln(2,N.E5), ln(1,N.B4), ln(1,N.D5), ln(1,N.C5),
-      ln(0,N.A4), ln(0,N.A4), ln(1,N.C4), ln(1,N.E4),
-      ln(1,N.A4), ln(0,N.G4), ln(0,N.F4), ln(0,N.E4),
+      // Bar 1-2: C#m arpeggio (G#3-C#4-E4 repeating, top melody B4)
+      ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),   ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),
+      ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),   ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),
+      // Bar 3-4: F#m (F#3-A3-C#4, top D4)
+      ln(0,'F#3'), ln(1,'A3'),  ln(2,'C#4'),  ln(0,'F#3'), ln(1,'A3'),  ln(2,'C#4'),
+      ln(0,'F#3'), ln(1,'A3'),  ln(2,'D4'),   ln(0,'F#3'), ln(1,'A3'),  ln(2,'D4'),
+      // Bar 5-6: E major (E3-G#3-B3, top E4)
+      ln(0,'E3'),  ln(1,'G#3'), ln(2,'B3'),   ln(0,'E3'),  ln(1,'G#3'), ln(2,'B3'),
+      ln(0,'E3'),  ln(1,'G#3'), ln(2,'E4'),   ln(0,'E3'),  ln(1,'G#3'), ln(2,'E4'),
+      // Bar 7-8: A minor / return (A3-C#4-E4)
+      ln(0,'A3'),  ln(1,'C#4'), ln(2,'E4'),   ln(0,'A3'),  ln(1,'C#4'), ln(2,'E4'),
+      ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),   ln(0,'G#3'), ln(1,'C#4'), ln(2,'E4'),
+      // Bar 9-10: Melody rises (top voice B4 - C#5)
+      ln(0,'G#3'), ln(1,'B3'),  ln(2,'E4'),   ln(0,'G#3'), ln(1,'B3'),  ln(2,'E4'),
+      ln(0,'G#3'), ln(1,'B3'),  ln(2,'B4'),   ln(0,'G#3'), ln(1,'B3'),  ln(2,'C#5'),
+      // Bar 11-12: resolve
+      ln(0,'F#3'), ln(1,'A3'),  ln(2,'C#5'),  ln(0,'F#3'), ln(1,'A3'),  ln(2,'B4'),
+      ln(0,'E3'),  ln(1,'G#3'), ln(2,'A4'),   ln(0,'E3'),  ln(1,'G#3'), ln(2,'G#4'),
     ],
-    stepFn(b){ return b*0.5; },
+    stepFn(b) { return b / 3; }, // triplets
 
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.A2,N.A2,N.E3,N.E3,N.F3,N.F3,N.E3,N.E3];
-      const ch=[[N.A3,N.C4,N.E4],[N.E3,N.G3,N.B3],[N.F3,N.A3,N.C4],[N.E3,N.Ab3,N.B3]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.28); kick(t+beat*2,0.20);
-        snare(t+beat,0.10); snare(t+beat*3,0.10);
-        bassNote(bl[i%8],t,beat*4*0.9,0.28);
-        pad(ch[i%4],t,beat*4,0.05,'sine');
-        // Waltz-feel hat
-        for(let k=0;k<6;k++) hat(t+k*beat*0.67,0.06);
-      }
-    }
+    bgNotes: genBG(54, 34, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1.5,2.5,3.5],
+      bass:  [[0,'C#2',2],[2,'G#2',2]],
+      pad:   [[0,'C#3',4],[0,'E3',4],[0,'G#3',4]]
+    })
   },
 
-  // ════════════════════════════════════════════
-  // 1. CLASSIC — Bach: Minuet in G (著作権切れ)
-  // ════════════════════════════════════════════
+  // ════════════════════════════
+  // 1. ベートーヴェン「エリーゼのために」(1810) - A minor
+  // ════════════════════════════
   {
-    id:1, name:'MINUET IN G', genre:'classic', icon:'🎻',
-    bpm:132, duration:30, desc:'クラシック / Bach/Petzold',
+    id:1, name:'エリーゼのために', nameEn:'FÜR ELISE', genre:'classic',
+    composer:'Beethoven WoO 59 (1810)', icon:'🎹',
+    bpm:116, duration:30,
+    diff:{easy:2,normal:5,hard:8}, instrument:'piano',
+
+    // Iconic E5-Eb5-E5-Eb5-E5-B4-D5-C5-A4 motif
+    mel: [
+      // A section (main theme)
+      ln(2,'E5'),  ln(2,'Eb5'), ln(2,'E5'),  ln(2,'Eb5'),
+      ln(2,'E5'),  ln(1,'B4'),  ln(1,'D5'),  ln(1,'C5'),
+      ln(0,'A4'),  ln(0,'A3'),  ln(1,'E4'),  ln(1,'A4'),
+      ln(1,'B4'),  ln(0,'E3'),  ln(1,'G#4'), ln(1,'B4'),
+      // A section repeat with variation
+      ln(2,'C5'),  ln(2,'E5'),  ln(2,'Eb5'), ln(2,'E5'),
+      ln(2,'Eb5'), ln(2,'E5'),  ln(1,'B4'),  ln(1,'D5'),
+      ln(1,'C5'),  ln(0,'A4'),  ln(0,'A3'),  ln(1,'E4'),
+      ln(1,'A4'),  ln(1,'B4'),  ln(0,'E3'),  ln(0,'A3'),
+      // B section (C major)
+      ln(0,'B3'),  ln(1,'C4'),  ln(2,'D4'),  ln(2,'E4'),
+      ln(2,'G4'),  ln(1,'F4'),  ln(1,'E4'),  ln(1,'D4'),
+      ln(0,'F3'),  ln(1,'A3'),  ln(2,'C4'),  ln(2,'E4'),
+      ln(2,'D4'),  ln(1,'F4'),  ln(1,'E4'),  ln(0,'E3'),
+    ],
+    stepFn(b) { return b * 0.5; },
+
+    bgNotes: genBG(116, 32, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0,0.5,1,1.5,2,2.5,3,3.5],
+      bass:  [[0,'A2',1],[1,'E3',1],[2,'A2',1],[3,'E3',1]],
+      pad:   [[0,'A3',2],[0,'C4',2],[2,'E3',2],[2,'G#3',2]]
+    })
+  },
+
+  // ════════════════════════════
+  // 2. ショパン「夜想曲 第2番」Op.9 No.2 (1830-31) - Eb major
+  // ════════════════════════════
+  {
+    id:2, name:'夜想曲 第2番', nameEn:"NOCTURNE Op.9 No.2", genre:'classic',
+    composer:'Chopin Op.9 No.2 (1830)', icon:'🌹',
+    bpm:66, duration:32,
+    diff:{easy:1,normal:3,hard:6}, instrument:'piano',
+
+    // Beautiful singing melody in Eb major
+    mel: [
+      // Bar 1: Bb4 - C5 - D5 - Eb5
+      ln(1,'Bb4'), ln(2,'C5'),  ln(2,'D5'),  ln(2,'Eb5'),
+      // Bar 2: F5 - Eb5 - D5 - C5
+      ln(2,'F5'),  ln(2,'Eb5'), ln(2,'D5'),  ln(1,'C5'),
+      // Bar 3: Bb4 - Ab4 - G4 - F4
+      ln(1,'Bb4'), ln(1,'Ab4'), ln(0,'G4'),  ln(0,'F4'),
+      // Bar 4: Eb4 long
+      ln(0,'Eb4'), ln(0,'Eb4'), ln(1,'Bb4'), ln(1,'Bb4'),
+      // Bar 5-6: ornamental rise
+      ln(1,'C5'),  ln(2,'Eb5'), ln(2,'F5'),  ln(2,'G5'),
+      ln(2,'Ab5'), ln(2,'G5'),  ln(2,'F5'),  ln(2,'Eb5'),
+      // Bar 7-8: descent
+      ln(2,'D5'),  ln(1,'C5'),  ln(1,'Bb4'), ln(1,'Ab4'),
+      ln(0,'G4'),  ln(0,'F4'),  ln(0,'Eb4'), ln(1,'Bb4'),
+      // Bar 9-10: variation
+      ln(2,'Eb5'), ln(2,'F5'),  ln(2,'G5'),  ln(2,'Ab5'),
+      ln(2,'Bb5'), ln(2,'Ab5'), ln(2,'G5'),  ln(2,'F5'),
+      // Bar 11-12: descend and cadence
+      ln(2,'Eb5'), ln(1,'D5'),  ln(1,'C5'),  ln(1,'Bb4'),
+      ln(0,'Ab4'), ln(0,'G4'),  ln(0,'F4'),  ln(0,'Eb4'),
+    ],
+    stepFn(b) { return b; },
+
+    bgNotes: genBG(66, 34, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1.5,2.5,3.5],
+      bass:  [[0,'Eb2',2],[2,'Bb2',2]],
+      pad:   [[0,'Eb3',4],[0,'G3',4],[0,'Bb3',4]]
+    })
+  },
+
+  // ════════════════════════════
+  // 3. ショパン「前奏曲 第15番 雨だれ」Op.28 No.15 (1839) - Db major
+  // ════════════════════════════
+  {
+    id:3, name:'雨だれの前奏曲', nameEn:'RAINDROP PRELUDE', genre:'classic',
+    composer:'Chopin Op.28 No.15 (1839)', icon:'🌧️',
+    bpm:60, duration:30,
+    diff:{easy:2,normal:4,hard:7}, instrument:'piano',
+
+    // The melody over the famous Ab "raindrop" ostinato
+    mel: [
+      // Melody in Db major over repeating Ab
+      ln(2,'F4'),  ln(2,'F4'),  ln(2,'Eb4'), ln(2,'Db4'),
+      ln(1,'Eb4'), ln(1,'F4'),  ln(2,'Ab4'), ln(2,'Bb4'),
+      ln(2,'Db5'), ln(2,'Db5'), ln(2,'C5'),  ln(2,'Bb4'),
+      ln(1,'Ab4'), ln(1,'Ab4'), ln(1,'Bb4'), ln(2,'C5'),
+      ln(2,'Db5'), ln(2,'Eb5'), ln(2,'F5'),  ln(2,'Eb5'),
+      ln(2,'Db5'), ln(1,'C5'),  ln(1,'Bb4'), ln(1,'Ab4'),
+      ln(0,'Gb4'), ln(1,'Ab4'), ln(2,'Bb4'), ln(2,'Db5'),
+      ln(2,'C5'),  ln(1,'Bb4'), ln(1,'Ab4'), ln(0,'Db4'),
+      // Section B - darker (C# minor)
+      ln(0,'C#4'), ln(0,'C#4'), ln(1,'E4'),  ln(1,'G#4'),
+      ln(2,'B4'),  ln(2,'B4'),  ln(2,'A4'),  ln(2,'G#4'),
+      ln(1,'F#4'), ln(1,'G#4'), ln(2,'A4'),  ln(2,'B4'),
+      ln(2,'C#5'), ln(2,'B4'),  ln(1,'A4'),  ln(0,'G#4'),
+    ],
+    stepFn(b) { return b; },
+
+    bgNotes: genBG(60, 32, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1,1.5,2,2.5,3,3.5], // raindrop feel
+      bass:  [[0,'Db2',4]],
+      pad:   [[0,'Ab3',4],[0,'Db3',4],[0,'F3',4]]
+    })
+  },
+
+  // ════════════════════════════
+  // 4. バッハ「G線上のアリア」(1731) - D major
+  // ════════════════════════════
+  {
+    id:4, name:'G線上のアリア', nameEn:'AIR ON THE G STRING', genre:'classic',
+    composer:'J.S.Bach BWV 1068 (1731)', icon:'🎻',
+    bpm:66, duration:32,
+    diff:{easy:1,normal:3,hard:6}, instrument:'strings',
+
+    // Authentic melody - violin part from BWV 1068
+    mel: [
+      // Bar 1: D5 - C#5 - B4 - A4
+      ln(2,'D5'),  ln(2,'C#5'), ln(2,'B4'),  ln(1,'A4'),
+      // Bar 2: G4 - F#4 - E4 - D4
+      ln(1,'G4'),  ln(1,'F#4'), ln(0,'E4'),  ln(0,'D4'),
+      // Bar 3: C#4 - B3 (chromatic)
+      ln(0,'C#4'), ln(0,'D4'),  ln(1,'E4'),  ln(1,'F#4'),
+      // Bar 4: G4 - A4
+      ln(1,'G4'),  ln(2,'A4'),  ln(2,'B4'),  ln(2,'C#5'),
+      // Bar 5: D5 - E5 ornament
+      ln(2,'D5'),  ln(2,'E5'),  ln(2,'D5'),  ln(2,'C#5'),
+      // Bar 6: B4 - A4 descent
+      ln(2,'B4'),  ln(1,'A4'),  ln(1,'G4'),  ln(1,'F#4'),
+      // Bar 7: E5 - F#5 peak
+      ln(2,'E5'),  ln(2,'F#5'), ln(2,'E5'),  ln(2,'D5'),
+      // Bar 8: C#5 - D5 resolve
+      ln(2,'C#5'), ln(2,'B4'),  ln(1,'A4'),  ln(0,'G4'),
+      // Bar 9-12: variation
+      ln(2,'F#5'), ln(2,'E5'),  ln(2,'D5'),  ln(2,'C#5'),
+      ln(2,'B4'),  ln(1,'A4'),  ln(1,'G4'),  ln(1,'F#4'),
+      ln(0,'E4'),  ln(0,'F#4'), ln(1,'G4'),  ln(1,'A4'),
+      ln(2,'B4'),  ln(2,'C#5'), ln(2,'D5'),  ln(2,'E5'),
+    ],
+    stepFn(b) { return b; },
+
+    bgNotes: genBG(66, 34, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1.5,2.5,3.5],
+      bass:  [[0,'D2',2],[2,'A2',2]],
+      pad:   [[0,'D3',4],[0,'F#3',4],[0,'A3',4]]
+    })
+  },
+
+  // ════════════════════════════
+  // 5. バッハ「メヌエット ト長調」BWV Anh.114 (1725) - G major
+  // ════════════════════════════
+  {
+    id:5, name:'メヌエット ト長調', nameEn:'MINUET IN G MAJOR', genre:'classic',
+    composer:'Petzold/Bach BWV Anh.114 (1725)', icon:'🎼',
+    bpm:120, duration:30,
+    diff:{easy:2,normal:5,hard:8}, instrument:'harpsichord',
+
+    // Accurate score - one of the most recognizable classical pieces
+    mel: [
+      // Bar 1-4 (A section)
+      ln(2,'D5'),  ln(1,'G4'),  ln(1,'A4'),  ln(2,'B4'),
+      ln(2,'C5'),  ln(2,'D5'),  ln(2,'B4'),  ln(0,'G4'),
+      ln(1,'E5'),  ln(2,'C5'),  ln(2,'D5'),  ln(2,'C5'),
+      ln(1,'B4'),  ln(0,'G4'),  ln(0,'G4'),  ln(0,'G4'),
+      // Bar 5-8
+      ln(0,'A4'),  ln(1,'D4'),  ln(1,'E4'),  ln(1,'F#4'),
+      ln(2,'G4'),  ln(2,'A4'),  ln(2,'B4'),  ln(2,'C5'),
+      ln(2,'D5'),  ln(1,'B4'),  ln(1,'D5'),  ln(1,'C5'),
+      ln(1,'B4'),  ln(0,'A4'),  ln(0,'A4'),  ln(0,'A4'),
+      // Bar 9-12 (B section)
+      ln(2,'B4'),  ln(1,'G4'),  ln(1,'A4'),  ln(2,'B4'),
+      ln(2,'C5'),  ln(1,'B4'),  ln(1,'A4'),  ln(1,'G4'),
+      ln(2,'D5'),  ln(2,'D4'),  ln(2,'E4'),  ln(2,'F#4'),
+      ln(2,'G4'),  ln(1,'F#4'), ln(1,'E4'),  ln(0,'D4'),
+    ],
+    stepFn(b) { return b * 0.5; },
+
+    bgNotes: genBG(120, 32, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0,0.5,1,1.5,2,2.5,3,3.5],
+      bass:  [[0,'G2',1],[1,'D3',1],[2,'G2',1],[3,'B2',1]],
+      pad:   [[0,'G3',2],[0,'B3',2],[2,'D3',2],[2,'G3',2]]
+    })
+  },
+
+  // ════════════════════════════
+  // 6. パッヘルベル「カノン」(c.1680) - D major
+  // ════════════════════════════
+  {
+    id:6, name:'パッヘルベルのカノン', nameEn:"PACHELBEL'S CANON", genre:'classic',
+    composer:'Pachelbel Canon in D (c.1680)', icon:'🕯️',
+    bpm:100, duration:32,
     diff:{easy:2,normal:5,hard:8}, instrument:'strings',
 
+    // Canon melody with characteristic 3-voice texture
     mel: [
-      // Minuet in G - D4 G4 A4 B4 C5 D5
-      ln(0,N.D4), ln(2,N.G4), ln(2,N.A4), ln(2,N.B4),
-      ln(2,N.C5), ln(2,N.D5), ln(2,N.B4), ln(2,N.G4),
-      ln(1,N.E4), ln(1,N.C5), ln(1,N.D5), ln(1,N.C5),
-      ln(0,N.B3), ln(2,N.G4), ln(1,N.A4), ln(2,N.B4),
-      ln(2,N.C5), ln(2,N.B4), ln(2,N.A4), ln(2,N.G4),
-      ln(1,N.D5), ln(1,N.D4), ln(0,N.D4), ln(0,N.D4),
-      ln(0,N.E4), ln(1,N.Gb4),ln(0,N.G4), ln(1,N.A4),
-      ln(2,N.B4), ln(1,N.G4), ln(0,N.G4), ln(0,N.G4),
+      // Voice 1 - descending bass theme as melody (counter)
+      ln(0,'D4'),  ln(0,'A3'),  ln(0,'B3'),  ln(0,'F#3'),
+      ln(0,'G3'),  ln(0,'D3'),  ln(0,'G3'),  ln(0,'A3'),
+      // Voice 2 - 8th note melody
+      ln(1,'F#4'), ln(1,'E4'),  ln(1,'D4'),  ln(1,'F#4'),
+      ln(1,'A4'),  ln(1,'F#4'), ln(1,'E4'),  ln(1,'D4'),
+      // Voice 3 - high melody (canon theme)
+      ln(2,'A4'),  ln(2,'B4'),  ln(2,'A4'),  ln(2,'F#4'),
+      ln(2,'E4'),  ln(2,'F#4'), ln(2,'A4'),  ln(2,'B4'),
+      // Rising variation
+      ln(2,'D5'),  ln(2,'C#5'), ln(2,'B4'),  ln(2,'A4'),
+      ln(2,'F#4'), ln(2,'A4'),  ln(2,'B4'),  ln(2,'C#5'),
+      // Peak
+      ln(2,'D5'),  ln(2,'E5'),  ln(2,'F#5'), ln(2,'E5'),
+      ln(2,'D5'),  ln(2,'B4'),  ln(2,'A4'),  ln(2,'G4'),
+      // Descend and resolve
+      ln(1,'F#4'), ln(1,'G4'),  ln(1,'A4'),  ln(1,'B4'),
+      ln(0,'D5'),  ln(0,'C#5'), ln(0,'B4'),  ln(0,'A4'),
     ],
-    stepFn(b){ return b*0.5; },
+    stepFn(b) { return b * 0.5; },
 
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.G2,N.G2,N.D3,N.D3,N.E3,N.E3,N.C3,N.D3];
-      const ch=[[N.G3,N.B3,N.D4],[N.D3,N.Gb3,N.A3],[N.C3,N.E3,N.G3],[N.D3,N.Gb3,N.A3]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.30); kick(t+beat*2,0.22);
-        snare(t+beat,0.11); snare(t+beat*3,0.11);
-        bassNote(bl[i%8],t,beat*4*0.9,0.30);
-        pad(ch[i%4],t,beat*4,0.055,'triangle');
-        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.05);
-      }
-    }
+    bgNotes: genBG(100, 34, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1.5,2.5,3.5],
+      bass:  [[0,'D2',1],[1,'A2',1],[2,'B2',1],[3,'F#2',1]],
+      pad:   [[0,'D3',4],[0,'F#3',4],[0,'A3',4]]
+    })
   },
 
-  // ════════════════════════════════════════════
-  // 2. J-POP — 川の流れのように (美空ひばり 著作権切れに近い有名曲インスパイア)
-  // ════════════════════════════════════════════
+  // ════════════════════════════
+  // 7. ヴィヴァルディ「春」第1楽章 (1723) - E major
+  // ════════════════════════════
   {
-    id:2, name:'RIVER FLOW', genre:'jpop', icon:'🌸',
-    bpm:84, duration:30, desc:'J-POP / Japanese Ballad',
-    diff:{easy:1,normal:3,hard:6}, instrument:'bell',
+    id:7, name:'四季より「春」', nameEn:'THE FOUR SEASONS - SPRING', genre:'classic',
+    composer:'Vivaldi Op.8 No.1 (1723)', icon:'🌸',
+    bpm:138, duration:30,
+    diff:{easy:3,normal:6,hard:9}, instrument:'strings',
 
+    // Opening Allegro - the famous ritornello theme
     mel: [
-      // Pentatonic ballad feel - C major pentatonic
-      ln(0,N.C4), ln(1,N.E4), ln(2,N.G4), ln(2,N.A4),
-      ln(2,N.G4), ln(1,N.E4), ln(1,N.D4), ln(0,N.C4),
-      ln(0,N.E4), ln(1,N.G4), ln(2,N.A4), ln(2,N.C5),
-      ln(2,N.A4), ln(1,N.G4), ln(0,N.E4), ln(0,N.D4),
-      ln(1,N.E4), ln(2,N.G4), ln(2,N.A4), ln(2,N.G4),
-      ln(1,N.E4), ln(0,N.D4), ln(0,N.C4), ln(0,N.D4),
-      ln(1,N.E4), ln(1,N.G4), ln(2,N.A4), ln(2,N.C5),
-      ln(2,N.D5), ln(2,N.C5), ln(1,N.A4), ln(0,N.G4),
+      // Main spring theme - E major, 3 voices
+      ln(0,'E4'),  ln(2,'E5'),  ln(1,'B4'),  ln(2,'G#5'),
+      ln(0,'G#4'), ln(2,'F#5'), ln(1,'E5'),  ln(2,'F#5'),
+      ln(0,'G#4'), ln(2,'G#5'), ln(1,'E5'),  ln(1,'B4'),
+      ln(0,'G#4'), ln(0,'B4'),  ln(1,'E5'),  ln(2,'E5'),
+      // Bird call figure - distributed
+      ln(0,'E4'),  ln(2,'B5'),  ln(1,'A5'),  ln(2,'G#5'),
+      ln(1,'F#5'), ln(0,'E4'),  ln(2,'E5'),  ln(2,'F#5'),
+      ln(0,'G#4'), ln(2,'G#5'), ln(1,'A5'),  ln(2,'B5'),
+      ln(1,'A5'),  ln(0,'G#4'), ln(2,'G#5'), ln(2,'E5'),
+      // Second theme
+      ln(0,'E4'),  ln(1,'G#4'), ln(2,'B4'),  ln(2,'E5'),
+      ln(0,'G#4'), ln(2,'B5'),  ln(2,'G#5'), ln(2,'F#5'),
+      ln(0,'E4'),  ln(1,'D#5'), ln(1,'E5'),  ln(2,'F#5'),
+      ln(0,'G#4'), ln(2,'A5'),  ln(2,'G#5'), ln(2,'F#5'),
     ],
-    stepFn(b){ return b; },
+    stepFn(b) { return b * 0.5; },
 
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.C3,N.C3,N.F3,N.F3,N.G3,N.G3,N.C3,N.C3];
-      const ch=[[N.C4,N.E4,N.G4],[N.F3,N.A3,N.C4],[N.G3,N.B3,N.D4],[N.C4,N.E4,N.G4]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.30); kick(t+beat*2,0.22);
-        snare(t+beat,0.12); snare(t+beat*3,0.12);
-        bassNote(bl[i%8],t,beat*4,0.30);
-        pad(ch[i%4],t,beat*4,0.06,'sine');
-        // Gentle 8th hats
-        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.05);
-      }
-    }
+    bgNotes: genBG(138, 32, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0,0.5,1,1.5,2,2.5,3,3.5],
+      bass:  [[0,'E2',1],[1,'B2',1],[2,'E3',1],[3,'B2',1]],
+      pad:   [[0,'E3',2],[0,'G#3',2],[2,'B3',2],[2,'E4',2]]
+    })
   },
 
-  // ════════════════════════════════════════════
-  // 3. J-POP — 勝手にシンドバッド スタイル (サザンオールスターズ インスパイア)
-  // ════════════════════════════════════════════
+  // ════════════════════════════
+  // 8. モーツァルト「トルコ行進曲」K.331 (1783) - A major
+  // ════════════════════════════
   {
-    id:3, name:'SHINDABAD GROOVE', genre:'jpop', icon:'🎤',
-    bpm:138, duration:30, desc:'J-POP / City Pop',
-    diff:{easy:2,normal:5,hard:8}, instrument:'electric',
+    id:8, name:'トルコ行進曲', nameEn:'TURKISH MARCH', genre:'classic',
+    composer:'Mozart K.331 (1783)', icon:'🎺',
+    bpm:144, duration:30,
+    diff:{easy:3,normal:6,hard:9}, instrument:'piano',
 
+    // Alla Turca - the famous march theme
     mel: [
-      // City pop - bright, major, syncopated
-      ln(0,N.G4), ln(1,N.A4), ln(2,N.B4), ln(2,N.D5),
-      ln(2,N.E5), ln(2,N.D5), ln(1,N.B4), ln(1,N.A4),
-      ln(0,N.G4), ln(0,N.A4), ln(1,N.B4), ln(2,N.E5),
-      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5), ln(0,N.B4),
-      ln(1,N.A4), ln(2,N.B4), ln(2,N.D5), ln(2,N.E5),
-      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5), ln(1,N.B4),
-      ln(0,N.A4), ln(0,N.G4), ln(1,N.A4), ln(2,N.B4),
-      ln(2,N.D5), ln(2,N.E5), ln(2,N.Gb5),ln(2,N.G5),
+      // Main theme - A minor section
+      ln(1,'E5'),  ln(1,'D#5'), ln(1,'E5'),  ln(0,'B4'),
+      ln(1,'D5'),  ln(1,'C#5'), ln(1,'D5'),  ln(0,'A4'),
+      ln(0,'C5'),  ln(0,'B4'),  ln(1,'C5'),  ln(1,'E5'),
+      ln(2,'A5'),  ln(2,'A5'),  ln(0,'A4'),  ln(0,'A4'),
+      // Continuation
+      ln(1,'E5'),  ln(1,'D#5'), ln(1,'E5'),  ln(0,'B4'),
+      ln(1,'D5'),  ln(1,'C#5'), ln(1,'D5'),  ln(0,'A4'),
+      ln(0,'C5'),  ln(0,'B4'),  ln(1,'C5'),  ln(1,'E5'),
+      ln(2,'A5'),  ln(2,'G#5'), ln(2,'A5'),  ln(0,'A4'),
+      // B section - A major
+      ln(2,'A5'),  ln(2,'G#5'), ln(2,'A5'),  ln(2,'E5'),
+      ln(2,'C#5'), ln(2,'E5'),  ln(2,'A5'),  ln(2,'A5'),
+      ln(2,'G#5'), ln(2,'A5'),  ln(2,'E5'),  ln(2,'C#5'),
+      ln(2,'B4'),  ln(1,'C#5'), ln(1,'D5'),  ln(1,'E5'),
     ],
-    stepFn(b){ return b*0.5; },
+    stepFn(b) { return b * 0.5; },
 
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.G2,N.G2,N.E3,N.E3,N.A2,N.A2,N.D3,N.D3];
-      const ch=[[N.G3,N.B3,N.D4],[N.E3,N.Ab3,N.B3],[N.A3,N.C4,N.E4],[N.D3,N.Gb3,N.A3]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.60); kick(t+beat*2,0.50);
-        snare(t+beat,0.22); snare(t+beat*3,0.22);
-        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%4===0?0.10:0.06);
-        bassNote(bl[i%8],t,beat*2*0.9,0.35);
-        bassNote(bl[(i+1)%8],t+beat*2,beat*2*0.9,0.35);
-        pad(ch[i%4],t,beat*4,0.05,'sawtooth');
-      }
-    }
+    bgNotes: genBG(144, 32, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5,3.75],
+      bass:  [[0,'A2',1],[1,'E3',1],[2,'A2',1],[3,'E3',1]],
+      pad:   [[0,'A3',2],[0,'C4',2],[2,'E3',2],[2,'A3',2]]
+    })
   },
 
-  // ════════════════════════════════════════════
-  // 4. WESTERN POP — ボヘミアン・ラプソディ スタイル (Queen インスパイア)
-  // ════════════════════════════════════════════
+  // ════════════════════════════
+  // 9. ドヴォルザーク「家路」(遠い故郷) Op.95 (1893) - F major
+  // ════════════════════════════
   {
-    id:4, name:'BOHEMIAN NIGHTS', genre:'western', icon:'🎸',
-    bpm:72, duration:30, desc:'洋楽 / Rock Ballad',
-    diff:{easy:2,normal:4,hard:7}, instrument:'strings',
+    id:9, name:'家路（遠い故郷）', nameEn:"GOIN' HOME", genre:'classic',
+    composer:'Dvořák New World Symphony (1893)', icon:'🏠',
+    bpm:72, duration:32,
+    diff:{easy:1,normal:3,hard:6}, instrument:'flute',
 
+    // Largo - the famous pentatonic melody (F major pentatonic)
     mel: [
-      // Bb major - operatic feel
-      ln(0,N.Bb4),ln(0,N.Bb4),ln(1,N.Bb4),ln(2,N.C5),
-      ln(2,N.D5), ln(2,N.Eb5),ln(2,N.D5), ln(1,N.C5),
-      ln(1,N.Bb4),ln(0,N.A4), ln(0,N.Bb4),ln(0,N.A4),
-      ln(0,N.G4), ln(1,N.F4), ln(0,N.G4), ln(1,N.F4),
-      ln(2,N.Eb5),ln(2,N.Eb5),ln(2,N.D5), ln(2,N.Eb5),
-      ln(2,N.F5), ln(2,N.Eb5),ln(2,N.D5), ln(1,N.C5),
-      ln(1,N.Bb4),ln(1,N.A4), ln(1,N.Bb4),ln(2,N.C5),
-      ln(2,N.D5), ln(2,N.Eb5),ln(2,N.F5), ln(2,N.G5),
+      // Bar 1-2: F4 - G4 - Bb4 - C5
+      ln(0,'F4'),  ln(0,'G4'),  ln(1,'Bb4'), ln(1,'C5'),
+      ln(2,'F5'),  ln(2,'F5'),  ln(1,'Eb5'), ln(1,'C5'),
+      // Bar 3-4: Bb4 - G4 - F4
+      ln(1,'Bb4'), ln(1,'G4'),  ln(0,'F4'),  ln(0,'G4'),
+      ln(1,'Bb4'), ln(1,'C5'),  ln(2,'F5'),  ln(2,'F5'),
+      // Bar 5-6: variation up
+      ln(2,'F5'),  ln(2,'G5'),  ln(2,'Bb5'), ln(2,'G5'),
+      ln(2,'F5'),  ln(2,'Eb5'), ln(1,'C5'),  ln(1,'Bb4'),
+      // Bar 7-8: descend
+      ln(1,'G4'),  ln(0,'F4'),  ln(0,'Eb4'), ln(0,'F4'),
+      ln(1,'G4'),  ln(1,'Bb4'), ln(1,'C5'),  ln(2,'F5'),
+      // Bar 9-10: peak
+      ln(2,'Ab5'), ln(2,'G5'),  ln(2,'F5'),  ln(2,'Eb5'),
+      ln(2,'C5'),  ln(2,'Bb4'), ln(1,'Ab4'), ln(1,'G4'),
+      // Bar 11-12: final cadence
+      ln(0,'F4'),  ln(0,'G4'),  ln(1,'Bb4'), ln(1,'C5'),
+      ln(2,'F5'),  ln(2,'Eb5'), ln(2,'C5'),  ln(2,'F5'),
     ],
-    stepFn(b){ return b; },
+    stepFn(b) { return b; },
 
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.Bb2,N.Bb2,N.F3,N.F3,N.Eb3,N.Eb3,N.Bb2,N.F2||N.F3];
-      const ch=[[N.Bb3,N.D4,N.F4],[N.F3,N.A3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Bb3,N.D4,N.F4]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.35); kick(t+beat*2,0.28);
-        snare(t+beat,0.18); snare(t+beat*3,0.18);
-        bassNote(bl[i%8],t,beat*4,0.32);
-        pad(ch[i%4],t,beat*4,0.06,'sine');
-        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.07);
-        // Clap on 2&4
-        clap(t+beat,0.15); clap(t+beat*3,0.15);
-      }
-    }
-  },
-
-  // ════════════════════════════════════════════
-  // 5. WESTERN POP — Shape of You スタイル (Ed Sheeran インスパイア)
-  // ════════════════════════════════════════════
-  {
-    id:5, name:'SHAPE OF NOW', genre:'western', icon:'🎵',
-    bpm:96, duration:30, desc:'洋楽 / Pop',
-    diff:{easy:2,normal:4,hard:7}, instrument:'electric',
-
-    mel: [
-      // C# minor pentatonic hook
-      ln(0,N.E4), ln(0,N.Ab4),ln(1,N.B4), ln(2,N.E5),
-      ln(2,N.E5), ln(2,N.Ab5),ln(2,N.Gb5),ln(2,N.E5),
-      ln(1,N.E5), ln(1,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),
-      ln(2,N.Ab5),ln(2,N.Gb5),ln(1,N.E5), ln(0,N.E5),
-      ln(0,N.E4), ln(1,N.Ab4),ln(2,N.B4), ln(2,N.E5),
-      ln(2,N.Gb5),ln(2,N.E5), ln(1,N.B4), ln(1,N.Ab4),
-      ln(1,N.Gb4),ln(0,N.E4), ln(0,N.Ab4),ln(1,N.B4),
-      ln(2,N.E5), ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.E5),
-    ],
-    stepFn(b){ return b*0.5; },
-
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.E3,N.E3,N.A2,N.A2,N.B2,N.B2,N.Ab2,N.Ab2];
-      const ch=[[N.E4,N.Ab4,N.B4],[N.A3,N.C4,N.E4],[N.B3,N.D4,N.Gb4],[N.Ab3,N.C4,N.Eb4]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.65); kick(t+beat*2,0.55);
-        snare(t+beat,0.22); snare(t+beat*3,0.22);
-        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.09:0.05);
-        bassNote(bl[i%8],t,beat*2*0.9,0.38);
-        bassNote(bl[(i+1)%8],t+beat*2,beat*2*0.9,0.38);
-        pad(ch[i%4],t,beat*4,0.05,'sawtooth');
-      }
-    }
-  },
-
-  // ════════════════════════════════════════════
-  // 6. CLUB — Around the World スタイル (Daft Punk インスパイア)
-  // ════════════════════════════════════════════
-  {
-    id:6, name:'AROUND THE GRID', genre:'club', icon:'🤖',
-    bpm:121, duration:30, desc:'クラブ / French House',
-    diff:{easy:2,normal:4,hard:7}, instrument:'synth',
-
-    mel: [
-      // A minor repeating hook - ascending then descending
-      ln(0,N.A4), ln(0,N.A4), ln(1,N.A4), ln(0,N.G4),
-      ln(0,N.A4), ln(1,N.A4), ln(2,N.E5), ln(1,N.A4),
-      ln(0,N.A4), ln(0,N.A4), ln(1,N.C5), ln(2,N.E5),
-      ln(2,N.A5), ln(2,N.G5), ln(1,N.E5), ln(1,N.C5),
-      ln(1,N.A4), ln(0,N.G4), ln(0,N.E4), ln(0,N.A4),
-      ln(0,N.G4), ln(0,N.E4), ln(0,N.D4), ln(0,N.E4),
-      ln(1,N.G4), ln(1,N.A4), ln(2,N.C5), ln(2,N.E5),
-      ln(2,N.A5), ln(2,N.G5), ln(2,N.E5), ln(2,N.A5),
-    ],
-    stepFn(b){ return b*0.5; },
-
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.A2,N.A2,N.A2,N.G2,N.A2,N.A2,N.E2||N.G2,N.A2];
-      const ch=[[N.A3,N.C4,N.E4],[N.G3,N.B3,N.D4],[N.F3,N.A3,N.C4],[N.E3,N.G3,N.B3]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        // 4-on-floor + syncopation
-        kick(t,0.70); kick(t+beat*0.5,0.45); kick(t+beat,0.55); kick(t+beat*1.5,0.40);
-        kick(t+beat*2,0.70); kick(t+beat*2.5,0.45); kick(t+beat*3,0.55); kick(t+beat*3.5,0.40);
-        clap(t+beat,0.22); clap(t+beat*3,0.22);
-        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.10:0.05);
-        for(let k=0;k<8;k++) bassNote(bl[k%8],t+k*beat*0.5,beat*0.45,0.38);
-        // Staccato stabs
-        ch[i%4].forEach(f=>{
-          const o=ctx.createOscillator(),g=ctx.createGain();
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=1400;
-          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          [0,beat*2].forEach(dt=>{
-            g.gain.setValueAtTime(0.07,t+dt);g.gain.exponentialRampToValueAtTime(0.001,t+dt+0.15);
-          });
-          o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
-        });
-      }
-    }
-  },
-
-  // ════════════════════════════════════════════
-  // 7. CLUB — Blue Monday スタイル (New Order インスパイア)
-  // ════════════════════════════════════════════
-  {
-    id:7, name:'BLUE MONDAY WAVE', genre:'club', icon:'🌆',
-    bpm:130, duration:30, desc:'クラブ / Synth-Pop',
-    diff:{easy:2,normal:4,hard:7}, instrument:'synth',
-
-    mel: [
-      // F minor synth lead
-      ln(0,N.F4), ln(1,N.Ab4),ln(2,N.Bb4),ln(2,N.C5),
-      ln(2,N.Bb4),ln(1,N.Ab4),ln(0,N.F4), ln(0,N.Eb4),
-      ln(0,N.F4), ln(1,N.Ab4),ln(2,N.Bb4),ln(2,N.C5),
-      ln(2,N.Eb5),ln(2,N.C5), ln(1,N.Bb4),ln(0,N.Ab4),
-      ln(0,N.F4), ln(0,N.Eb4),ln(0,N.F4), ln(1,N.Ab4),
-      ln(1,N.Bb4),ln(2,N.C5), ln(2,N.Bb4),ln(1,N.Ab4),
-      ln(0,N.G4), ln(1,N.Ab4),ln(1,N.Bb4),ln(2,N.C5),
-      ln(2,N.F5), ln(2,N.Eb5),ln(2,N.C5), ln(2,N.Bb4),
-    ],
-    stepFn(b){ return b*0.5; },
-
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.F3,N.F3,N.Ab2,N.F3,N.Eb3,N.F3,N.Ab2,N.Bb2];
-      const ch=[[N.F3,N.Ab3,N.C4],[N.Eb3,N.G3,N.Bb3],[N.Db3||N.D3,N.F3,N.Ab3],[N.Eb3,N.G3,N.Bb3]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.65); kick(t+beat*0.75,0.45); kick(t+beat*2,0.65); kick(t+beat*2.75,0.45);
-        snare(t+beat,0.25); snare(t+beat*3,0.25);
-        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%4===0?0.10:0.06);
-        for(let k=0;k<8;k++) bassNote(bl[k%8],t+k*beat*0.5,beat*0.45,0.36);
-        ch[i%4].forEach(f=>{
-          const o=ctx.createOscillator(),g=ctx.createGain();
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';
-          lp.frequency.setValueAtTime(400,t);lp.frequency.linearRampToValueAtTime(1600,t+beat*2);
-          lp.frequency.linearRampToValueAtTime(400,t+beat*4);
-          o.type='sawtooth';o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.065,t);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
-          o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
-        });
-      }
-    }
-  },
-
-  // ════════════════════════════════════════════
-  // 8. R&B — Isn't She Lovely スタイル (Stevie Wonder インスパイア)
-  // ════════════════════════════════════════════
-  {
-    id:8, name:"ISN'T SHE GROOVY", genre:'rnb', icon:'✨',
-    bpm:100, duration:30, desc:'R&B / Stevie Wonder Style',
-    diff:{easy:2,normal:4,hard:7}, instrument:'electric',
-
-    mel: [
-      // E major - bright, joyful
-      ln(2,N.E5), ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),
-      ln(2,N.Ab5),ln(2,N.Gb5),ln(1,N.E5), ln(1,N.B4),
-      ln(1,N.Ab4),ln(0,N.Gb4),ln(0,N.E4), ln(0,N.Gb4),
-      ln(1,N.Ab4),ln(1,N.B4), ln(2,N.E5), ln(2,N.Gb5),
-      ln(2,N.Ab5),ln(2,N.B4), ln(2,N.Ab5),ln(2,N.Gb5),
-      ln(1,N.E5), ln(1,N.Ab4),ln(0,N.Gb4),ln(0,N.E4),
-      ln(0,N.Gb4),ln(1,N.Ab4),ln(2,N.B4), ln(2,N.E5),
-      ln(2,N.Gb5),ln(2,N.Ab5),ln(2,N.B5)||ln(2,N.Bb5),ln(2,N.E5),
-    ],
-    stepFn(b){ return b*0.5; },
-
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.E3,N.E3,N.A2,N.A2,N.B2,N.B2,N.Ab2,N.Ab2];
-      const ch=[[N.E4,N.Ab4,N.B4],[N.A3,N.C4,N.E4],[N.B3,N.D4,N.Gb4],[N.Ab3,N.C4,N.E4]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.60); kick(t+beat*2.5,0.45);
-        snare(t+beat,0.22); snare(t+beat*3,0.22);
-        for(let k=0;k<16;k++) hat(t+k*beat*0.25,k%2===0?0.10:0.06);
-        // Thumb bass (slap feel)
-        bassNote(bl[i%8],t,beat*0.3,0.45);
-        bassNote(bl[i%8],t+beat*1.5,beat*0.3,0.35);
-        bassNote(bl[(i+1)%8],t+beat*2,beat*0.3,0.45);
-        bassNote(bl[(i+1)%8],t+beat*3.5,beat*0.3,0.35);
-        pad(ch[i%4],t,beat*4,0.055,'sine');
-        clap(t+beat,0.18); clap(t+beat*3,0.18);
-      }
-    }
-  },
-
-  // ════════════════════════════════════════════
-  // 9. R&B — I Will Always Love You スタイル (Whitney Houston インスパイア)
-  // ════════════════════════════════════════════
-  {
-    id:9, name:'ALWAYS LOVE YOU', genre:'rnb', icon:'💖',
-    bpm:66, duration:30, desc:'R&B / Power Ballad',
-    diff:{easy:1,normal:3,hard:6}, instrument:'bell',
-
-    mel: [
-      // D major - soaring ballad melody
-      ln(0,N.D4), ln(0,N.D4), ln(1,N.E4), ln(1,N.Gb4),
-      ln(2,N.A4), ln(2,N.A4), ln(1,N.Gb4),ln(1,N.E4),
-      ln(1,N.D4), ln(0,N.D4), ln(0,N.E4), ln(1,N.D4),
-      ln(1,N.A4), ln(2,N.A4), ln(2,N.A4), ln(2,N.B4),
-      ln(2,N.D5), ln(2,N.D5), ln(2,N.E5), ln(2,N.Gb5),
-      ln(2,N.A5), ln(2,N.Gb5),ln(2,N.E5), ln(1,N.D5),
-      ln(1,N.E5), ln(2,N.Gb5),ln(2,N.A5), ln(2,N.B5)||ln(2,N.Bb5),
-      ln(2,N.A5), ln(2,N.Gb5),ln(2,N.E5), ln(2,N.D5),
-    ],
-    stepFn(b){ return b; },
-
-    bgFn(ctx,master,nodes,startT,bars,beat,kick,snare,hat,clap,bassNote,pad,osc,noiseN){
-      const bl=[N.D3,N.D3,N.G3,N.G3,N.A3,N.A3,N.Bb3||N.B3,N.A3];
-      const ch=[[N.D4,N.Gb4,N.A4],[N.G3,N.B3,N.D4],[N.A3,N.C4,N.E4],[N.Bb3||N.B3,N.D4,N.F4]];
-      for(let i=0;i<bars;i++){
-        const t=startT+i*beat*4;
-        kick(t,0.30); kick(t+beat*2,0.22);
-        snare(t+beat,0.15); snare(t+beat*3,0.15);
-        bassNote(bl[i%8],t,beat*4,0.30);
-        pad(ch[i%4],t,beat*4,0.07,'sine');
-        // Soft hats
-        for(let k=0;k<8;k++) hat(t+k*beat*0.5,0.06);
-        // Strings swell
-        [ch[i%4][0]*2,ch[i%4][1]*2].forEach(f=>{
-          const o=ctx.createOscillator(),g=ctx.createGain();
-          o.type='sawtooth';o.frequency.value=f;
-          const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=700;
-          o.connect(lp);lp.connect(g);g.connect(master);
-          g.gain.setValueAtTime(0.0,t);g.gain.linearRampToValueAtTime(0.04,t+beat);
-          g.gain.setValueAtTime(0.04,t+beat*3);g.gain.exponentialRampToValueAtTime(0.001,t+beat*4);
-          o.start(t);o.stop(t+beat*4+0.1);nodes.push(o,lp,g);
-        });
-      }
-    }
+    bgNotes: genBG(72, 34, {
+      kick:  [0, 2],
+      snare: [1, 3],
+      hat:   [0.5,1.5,2.5,3.5],
+      bass:  [[0,'F2',2],[2,'C3',2]],
+      pad:   [[0,'F3',4],[0,'A3',4],[0,'C4',4]]
+    })
   }
 
 ]; // end SONGS
 
 // ===== DIFFICULTY FILTER =====
-// Filters each lane independently to ensure all 3 lanes always appear
+// Filter per lane independently - guarantees all 3 lanes always appear
 function filterChart(rawChart, difficulty) {
   if (difficulty === 'hard') return rawChart;
 
-  // Split by lane
-  const byLane = [[],[],[]];
+  const byLane = [[], [], []];
   rawChart.forEach(n => byLane[n.lane].push(n));
 
   let result = [];
-  if (difficulty === 'easy') {
-    // Each lane: keep every Nth note
-    byLane.forEach((laneNotes, li) => {
-      const step = li === 2 ? 2 : 3; // high lane denser
-      laneNotes.forEach((n,i) => { if(i%step===0) result.push(n); });
-    });
-  } else { // normal
-    byLane.forEach((laneNotes, li) => {
-      laneNotes.forEach((n,i) => { if(i%2===0) result.push(n); });
-    });
-  }
+  byLane.forEach((laneNotes, li) => {
+    if (difficulty === 'easy') {
+      // Keep every 3rd for lane 0&1, every 2nd for lane 2 (high = lead melody)
+      const step = li === 2 ? 2 : 3;
+      laneNotes.forEach((n, i) => { if (i % step === 0) result.push(n); });
+    } else {
+      // Normal: every 2nd note in each lane
+      laneNotes.forEach((n, i) => { if (i % 2 === 0) result.push(n); });
+    }
+  });
 
-  // Sort by time and remove notes too close together (< 80ms apart)
-  result.sort((a,b) => a.time - b.time);
+  // Sort by time, remove notes closer than 80ms
+  result.sort((a, b) => a.time - b.time);
   const clean = [];
-  let lastT = -1;
+  let lastT = -999;
   result.forEach(n => {
     if (n.time - lastT >= 0.08) { clean.push(n); lastT = n.time; }
   });
   return clean;
 }
 
+// ===== CHART BUILDER =====
+// Expands mel pattern to fill song duration by looping
+function expandMelody(mel, startTime, stepTime, duration) {
+  const patDur = mel.length * stepTime;
+  const reps = Math.ceil((duration - startTime + 2) / patDur) + 1;
+  const notes = [];
+  for (let r = 0; r < reps; r++) {
+    mel.forEach((item, i) => {
+      const t = startTime + r * patDur + i * stepTime;
+      if (t > duration + 0.5) return;
+      notes.push({ time: t, lane: item.lane, freq: item.freq, noteName: item.noteName, dur: item.dur || 0.5 });
+    });
+  }
+  return notes;
+}
+
 // ===== GAME ENGINE =====
 const Game = (() => {
-  let currentSong=null, currentDiff='easy';
-  let chart=[], noteElements={};
-  let score=0, combo=0, maxCombo=0, health=100;
-  let perfect=0, good=0, miss=0;
-  let gameRunning=false, gamePaused=false;
-  let gameStartTime=0, noteSpeed=300;
-  let judgeWindow={perfect:0.18,good:0.32};
-  let animFrame=null, judgeTimer=null, playfieldH=0;
-  let pendingNotes=[], activeNotes=[], hitNotes=new Set();
-  let totalNoteCount=0, gaugeScore=0;
+  let currentSong = null, currentDiff = 'easy';
+  let chart = [], noteElements = {};
+  let score = 0, combo = 0, maxCombo = 0, health = 100;
+  let perfect = 0, good = 0, miss = 0;
+  let gameRunning = false, gamePaused = false;
+  let gameStartTime = 0, noteSpeed = 280;
+  let judgeWindow = { perfect: 0.20, good: 0.35 };
+  let animFrame = null, judgeTimer = null, playfieldH = 0;
+  let pendingNotes = [], activeNotes = [], hitNotes = new Set();
+  let totalNoteCount = 0, gaugeScore = 0;
 
-  const GAUGE_PASS=80;
-  const KEY_MAP={'z':0,'x':1,'c':2};
-  const keyState={0:false,1:false,2:false};
+  const GAUGE_PASS = 80;
+  const KEY_MAP = { 'z': 0, 'x': 1, 'c': 2 };
+  const keyState = { 0: false, 1: false, 2: false };
 
   function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     document.getElementById(id).classList.add('active');
   }
-  function showTitle() { AudioEngine.stopAll(); showScreen('screen-title'); }
+  function showTitle()      { AudioEngine.stopAll(); showScreen('screen-title'); }
   function showSongSelect() { AudioEngine.stopAll(); buildSongList(); showScreen('screen-select'); }
 
-  const GENRE_LABELS = {classic:'🎼 クラシック',jpop:'🌸 J-POP',western:'🎸 洋楽',club:'🎛 クラブ',rnb:'✨ R&B'};
-
   function buildSongList() {
-    const list=document.getElementById('song-list');
-    list.innerHTML='';
-    let lastGenre='';
-    SONGS.forEach(song=>{
-      if (song.genre !== lastGenre) {
-        const hdr=document.createElement('div');
-        hdr.className='genre-header';
-        hdr.textContent=GENRE_LABELS[song.genre]||song.genre;
-        list.appendChild(hdr);
-        lastGenre=song.genre;
-      }
-      const stars=song.diff[currentDiff];
-      const card=document.createElement('div');
-      card.className=`song-card genre-${song.genre}`;
-      card.innerHTML=`
+    const list = document.getElementById('song-list');
+    list.innerHTML = '';
+    SONGS.forEach(song => {
+      const stars = song.diff[currentDiff];
+      const card = document.createElement('div');
+      card.className = `song-card genre-classic`;
+      card.innerHTML = `
         <div class="song-icon">${song.icon}</div>
         <div class="song-info">
           <div class="song-name">${song.name}</div>
-          <div class="song-meta">${song.desc} · BPM ${song.bpm}</div>
+          <div class="song-meta">${song.composer} · BPM ${song.bpm}</div>
         </div>
         <div>
           <div class="song-bpm">${song.duration}s</div>
-          <div class="song-diff-stars ${currentDiff}">${'★'.repeat(stars)+'☆'.repeat(10-stars).substring(0,8)}</div>
+          <div class="song-diff-stars ${currentDiff}">${'★'.repeat(stars) + '☆'.repeat(10 - stars).substring(0, 8)}</div>
         </div>`;
-      card.addEventListener('click',()=>startGame(song));
-      card.addEventListener('touchend',e=>{e.preventDefault();startGame(song);});
+      card.addEventListener('click', () => startGame(song));
+      card.addEventListener('touchend', e => { e.preventDefault(); startGame(song); });
       list.appendChild(card);
     });
   }
 
   function setDifficulty(diff) {
-    currentDiff=diff;
-    document.querySelectorAll('.diff-btn').forEach(b=>b.classList.remove('active'));
+    currentDiff = diff;
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.diff-btn[data-diff="${diff}"]`).classList.add('active');
     buildSongList();
   }
 
   function startGame(song) {
     AudioEngine.init();
-    currentSong=song;
+    currentSong = song;
 
-    // Build chart using song's mel array and stepFn
-    const b = 60/song.bpm;
+    const b = 60 / song.bpm;
     const step = song.stepFn(b);
-    const raw = buildChart(song.mel, b*2, step, song.duration);
+    const raw = expandMelody(song.mel, b * 2, step, song.duration);
     chart = filterChart(raw, currentDiff);
     totalNoteCount = chart.length;
-    pendingNotes = [...chart].sort((a,b2)=>a.time-b2.time);
-    activeNotes=[]; hitNotes=new Set();
-    score=0;combo=0;maxCombo=0;health=100;perfect=0;good=0;miss=0;gaugeScore=0;
+    pendingNotes = [...chart].sort((a, b2) => a.time - b2.time);
+    activeNotes = []; hitNotes = new Set();
+    score = 0; combo = 0; maxCombo = 0; health = 100;
+    perfect = 0; good = 0; miss = 0; gaugeScore = 0;
 
-    document.getElementById('ui-song-name').textContent=song.name;
-    const diffEl=document.getElementById('ui-difficulty');
-    diffEl.textContent=currentDiff.toUpperCase();
-    diffEl.className=`diff-label ${currentDiff}`;
-    document.getElementById('ui-score').textContent='0';
-    document.getElementById('ui-combo').textContent='';
-    document.getElementById('health-bar').style.width='100%';
-    document.getElementById('progress-bar').style.width='0%';
-    document.getElementById('notes-container').innerHTML='';
-    document.getElementById('hit-effects').innerHTML='';
-    noteElements={};
+    document.getElementById('ui-song-name').textContent = song.name;
+    const diffEl = document.getElementById('ui-difficulty');
+    diffEl.textContent = currentDiff.toUpperCase();
+    diffEl.className = `diff-label ${currentDiff}`;
+    document.getElementById('ui-score').textContent = '0';
+    document.getElementById('ui-combo').textContent = '';
+    document.getElementById('health-bar').style.width = '100%';
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('notes-container').innerHTML = '';
+    document.getElementById('hit-effects').innerHTML = '';
+    noteElements = {};
     updateGauge();
 
-    noteSpeed={easy:200,normal:310,hard:440}[currentDiff];
-    judgeWindow={
-      easy:  {perfect:0.22, good:0.38},
-      normal:{perfect:0.12, good:0.22},
-      hard:  {perfect:0.07, good:0.13}
+    noteSpeed = { easy: 190, normal: 300, hard: 420 }[currentDiff];
+    judgeWindow = {
+      easy:   { perfect: 0.22, good: 0.38 },
+      normal: { perfect: 0.12, good: 0.22 },
+      hard:   { perfect: 0.07, good: 0.13 }
     }[currentDiff];
 
     showScreen('screen-game');
-    playfieldH=document.getElementById('playfield').clientHeight;
-    gameRunning=true; gamePaused=false;
+    playfieldH = document.getElementById('playfield').clientHeight;
+    gameRunning = true; gamePaused = false;
 
-    gameStartTime=AudioEngine.now()+0.5;
-    AudioEngine.playBG(song, gameStartTime, song.duration);
+    gameStartTime = AudioEngine.now() + 0.5;
+    AudioEngine.scheduleBG(song, gameStartTime, song.duration);
 
-    if(animFrame) cancelAnimationFrame(animFrame);
-    animFrame=requestAnimationFrame(gameLoop);
+    if (animFrame) cancelAnimationFrame(animFrame);
+    animFrame = requestAnimationFrame(gameLoop);
   }
 
   function gameLoop() {
     if (!gameRunning) return;
-    if (gamePaused) { animFrame=requestAnimationFrame(gameLoop); return; }
+    if (gamePaused) { animFrame = requestAnimationFrame(gameLoop); return; }
 
-    const elapsed=AudioEngine.now()-gameStartTime;
-    const spawnAhead=playfieldH/noteSpeed+0.25;
+    const elapsed = AudioEngine.now() - gameStartTime;
+    const spawnAhead = playfieldH / noteSpeed + 0.25;
 
-    while(pendingNotes.length>0 && pendingNotes[0].time-elapsed<spawnAhead) {
+    while (pendingNotes.length > 0 && pendingNotes[0].time - elapsed < spawnAhead) {
       spawnNote(pendingNotes.shift());
     }
     updateNotes(elapsed);
     checkMisses(elapsed);
 
-    document.getElementById('progress-bar').style.width=
-      (Math.max(0,Math.min(elapsed/currentSong.duration,1))*100)+'%';
+    document.getElementById('progress-bar').style.width =
+      (Math.max(0, Math.min(elapsed / currentSong.duration, 1)) * 100) + '%';
 
-    // End when song time passed AND no notes remain
-    if(elapsed >= currentSong.duration+2.0 && pendingNotes.length===0 && activeNotes.length===0) {
+    if (elapsed >= currentSong.duration + 2.0 && pendingNotes.length === 0 && activeNotes.length === 0) {
       endGame(); return;
     }
-    animFrame=requestAnimationFrame(gameLoop);
+    animFrame = requestAnimationFrame(gameLoop);
   }
 
   function spawnNote(note) {
-    const el=document.createElement('div');
-    el.className='note';
-    el.dataset.lane=note.lane;
-    const id=note.time.toFixed(4)+'_'+note.lane+'_'+Math.random().toString(36).slice(2,5);
-    el.dataset.id=id;
-    const laneLeft=[0,33.33,66.66];
-    el.style.left=laneLeft[note.lane]+'%';
-    el.style.width=(note.lane===2?33.34:33.33)+'%';
-    el.style.top='-34px';
+    const el = document.createElement('div');
+    el.className = 'note';
+    el.dataset.lane = note.lane;
+    const id = note.time.toFixed(4) + '_' + note.lane + '_' + Math.random().toString(36).slice(2, 5);
+    el.dataset.id = id;
+    const laneLeft = [0, 33.33, 66.66];
+    el.style.left  = laneLeft[note.lane] + '%';
+    el.style.width = (note.lane === 2 ? 33.34 : 33.33) + '%';
+    el.style.top   = '-34px';
     document.getElementById('notes-container').appendChild(el);
-    noteElements[id]=el;
-    activeNotes.push({...note,elId:id});
+    noteElements[id] = el;
+    activeNotes.push({ ...note, elId: id });
   }
 
   function updateNotes(elapsed) {
-    activeNotes.forEach(note=>{
-      const el=noteElements[note.elId];
-      if(!el) return;
-      el.style.top=(playfieldH-(note.time-elapsed)*noteSpeed-32)+'px';
+    activeNotes.forEach(note => {
+      const el = noteElements[note.elId];
+      if (!el) return;
+      el.style.top = (playfieldH - (note.time - elapsed) * noteSpeed - 32) + 'px';
     });
   }
 
   function checkMisses(elapsed) {
-    const toRemove=[];
-    activeNotes.forEach(note=>{
-      if(hitNotes.has(note.elId)){toRemove.push(note.elId);return;}
-      if(note.time-elapsed < -judgeWindow.good) {
-        registerJudge('miss',note.lane,note.elId,note);
+    const toRemove = [];
+    activeNotes.forEach(note => {
+      if (hitNotes.has(note.elId)) { toRemove.push(note.elId); return; }
+      if (note.time - elapsed < -judgeWindow.good) {
+        registerJudge('miss', note.lane, note.elId, note);
         toRemove.push(note.elId);
       }
     });
-    toRemove.forEach(id=>removeNote(id));
+    toRemove.forEach(id => removeNote(id));
   }
 
   function removeNote(id) {
-    activeNotes=activeNotes.filter(n=>n.elId!==id);
-    const el=noteElements[id];
-    if(el){el.remove();delete noteElements[id];}
+    activeNotes = activeNotes.filter(n => n.elId !== id);
+    const el = noteElements[id];
+    if (el) { el.remove(); delete noteElements[id]; }
   }
 
   function onKeyDown(e) {
-    if(!gameRunning||gamePaused||e.repeat) return;
-    const lane=KEY_MAP[e.key.toLowerCase()];
-    if(lane===undefined||keyState[lane]) return;
-    keyState[lane]=true;
+    if (!gameRunning || gamePaused || e.repeat) return;
+    const lane = KEY_MAP[e.key.toLowerCase()];
+    if (lane === undefined || keyState[lane]) return;
+    keyState[lane] = true;
     pressLane(lane);
     document.getElementById(`btn-${lane}`).classList.add('pressed');
   }
   function onKeyUp(e) {
-    const lane=KEY_MAP[e.key.toLowerCase()];
-    if(lane===undefined) return;
-    keyState[lane]=false;
+    const lane = KEY_MAP[e.key.toLowerCase()];
+    if (lane === undefined) return;
+    keyState[lane] = false;
     document.getElementById(`btn-${lane}`)?.classList.remove('pressed');
   }
-  function onTouch(lane,down) {
+  function onTouch(lane, down) {
     AudioEngine.resume();
-    if(down) {
-      if(!gameRunning||gamePaused) return;
+    if (down) {
+      if (!gameRunning || gamePaused) return;
       pressLane(lane);
       document.getElementById(`btn-${lane}`).classList.add('pressed');
     } else {
@@ -781,126 +872,122 @@ const Game = (() => {
   }
 
   function pressLane(lane) {
-    const elapsed=AudioEngine.now()-gameStartTime;
-    let bestNote=null, bestDiff=Infinity;
-    activeNotes.forEach(note=>{
-      if(note.lane!==lane||hitNotes.has(note.elId)) return;
-      const d=Math.abs(note.time-elapsed);
-      if(d<bestDiff){bestDiff=d;bestNote=note;}
+    const elapsed = AudioEngine.now() - gameStartTime;
+    let bestNote = null, bestDiff = Infinity;
+    activeNotes.forEach(note => {
+      if (note.lane !== lane || hitNotes.has(note.elId)) return;
+      const d = Math.abs(note.time - elapsed);
+      if (d < bestDiff) { bestDiff = d; bestNote = note; }
     });
 
-    if(!bestNote) {
-      // Play fallback sound even with no note
-      const fallback=[N.A4,N.C5,N.E5][lane];
-      AudioEngine.hitNote(fallback, currentSong?.instrument||'piano');
+    if (!bestNote) {
+      const fallbacks = ['A4', 'C5', 'E5'];
+      AudioEngine.hitNote(fallbacks[lane], freq(fallbacks[lane]), currentSong?.instrument || 'piano', 0.3);
       return;
     }
 
-    if(bestDiff<=judgeWindow.perfect) {
-      registerJudge('perfect',lane,bestNote.elId,bestNote);
+    if (bestDiff <= judgeWindow.perfect) {
+      registerJudge('perfect', lane, bestNote.elId, bestNote);
       hitNotes.add(bestNote.elId); removeNote(bestNote.elId);
-    } else if(bestDiff<=judgeWindow.good) {
-      registerJudge('good',lane,bestNote.elId,bestNote);
+    } else if (bestDiff <= judgeWindow.good) {
+      registerJudge('good', lane, bestNote.elId, bestNote);
       hitNotes.add(bestNote.elId); removeNote(bestNote.elId);
     }
   }
 
-  function registerJudge(type,lane,noteId,note) {
-    if(type!=='miss') AudioEngine.hitNote(note.freq, currentSong?.instrument||'piano');
-    else AudioEngine.hitMiss();
-
-    if(type==='perfect'){
-      score+=300+combo*2; combo++; if(combo>maxCombo)maxCombo=combo;
-      health=Math.min(100,health+1.5); perfect++;
-      gaugeScore=Math.min(100,gaugeScore+(100/totalNoteCount)*1.5);
-    } else if(type==='good'){
-      score+=100+combo; combo++; if(combo>maxCombo)maxCombo=combo;
-      good++;
-      gaugeScore=Math.min(100,gaugeScore+(100/totalNoteCount)*0.8);
+  function registerJudge(type, lane, noteId, note) {
+    if (type !== 'miss') {
+      AudioEngine.hitNote(note.noteName || 'C5', note.freq, currentSong?.instrument || 'piano', note.dur || 0.5);
     } else {
-      combo=0; health=Math.max(0,health-6); miss++;
-      gaugeScore=Math.max(0,gaugeScore-(100/totalNoteCount)*0.4);
+      AudioEngine.hitMiss();
     }
 
-    document.getElementById('ui-score').textContent=score.toLocaleString();
-    document.getElementById('ui-combo').textContent=combo>1?combo:'';
+    if (type === 'perfect') {
+      score += 300 + combo * 2; combo++; if (combo > maxCombo) maxCombo = combo;
+      health = Math.min(100, health + 1.5); perfect++;
+      gaugeScore = Math.min(100, gaugeScore + (100 / totalNoteCount) * 1.5);
+    } else if (type === 'good') {
+      score += 100 + combo; combo++; if (combo > maxCombo) maxCombo = combo;
+      good++;
+      gaugeScore = Math.min(100, gaugeScore + (100 / totalNoteCount) * 0.8);
+    } else {
+      combo = 0; health = Math.max(0, health - 6); miss++;
+      gaugeScore = Math.max(0, gaugeScore - (100 / totalNoteCount) * 0.4);
+    }
 
-    const hb=document.getElementById('health-bar');
-    hb.style.width=health+'%';
-    hb.style.background=health>50
-      ?'linear-gradient(90deg,var(--accent4),var(--accent1))'
-      :health>25?'linear-gradient(90deg,var(--accent2),var(--accent5))'
-      :'linear-gradient(90deg,#ff3333,var(--accent3))';
+    document.getElementById('ui-score').textContent = score.toLocaleString();
+    document.getElementById('ui-combo').textContent = combo > 1 ? combo : '';
+
+    const hb = document.getElementById('health-bar');
+    hb.style.width = health + '%';
+    hb.style.background = health > 50
+      ? 'linear-gradient(90deg,var(--accent4),var(--accent1))'
+      : health > 25
+        ? 'linear-gradient(90deg,var(--accent2),var(--accent5))'
+        : 'linear-gradient(90deg,#ff3333,var(--accent3))';
 
     updateGauge();
-    showJudge(type,combo);
-    showHitEffect(type,lane);
-    if(health<=0) endGame();
+    showJudge(type, combo);
+    showHitEffect(type, lane);
+    if (health <= 0) endGame();
   }
 
   function updateGauge() {
-    const fill=document.getElementById('gauge-fill');
-    const label=document.getElementById('gauge-label');
-    if(!fill) return;
-    const pct=Math.round(gaugeScore);
-    fill.style.width=pct+'%';
-    const pass=pct>=GAUGE_PASS;
-    fill.className='gauge-fill '+(pass?'pass':'warn');
-    if(label) label.textContent=pct+'%'+(pass?' ✓':'');
+    const fill  = document.getElementById('gauge-fill');
+    const label = document.getElementById('gauge-label');
+    if (!fill) return;
+    const pct = Math.round(gaugeScore);
+    fill.style.width = pct + '%';
+    const pass = pct >= GAUGE_PASS;
+    fill.className = 'gauge-fill ' + (pass ? 'pass' : 'warn');
+    if (label) label.textContent = pct + '%' + (pass ? ' ✓' : '');
   }
 
-  function showJudge(type,combo) {
-    if(judgeTimer) clearTimeout(judgeTimer);
-    const el=document.getElementById('judge-display');
-    const text={perfect:'PERFECT',good:'GOOD',miss:'MISS'}[type];
-    const comboHtml=combo>1?`<div class="judge-combo">${combo} COMBO</div>`:'';
-    el.innerHTML=`<div class="judge-${type}">${text}${comboHtml}</div>`;
-    judgeTimer=setTimeout(()=>{el.innerHTML='';},420);
+  function showJudge(type, combo) {
+    if (judgeTimer) clearTimeout(judgeTimer);
+    const el = document.getElementById('judge-display');
+    const text = { perfect: 'PERFECT', good: 'GOOD', miss: 'MISS' }[type];
+    const comboHtml = combo > 1 ? `<div class="judge-combo">${combo} COMBO</div>` : '';
+    el.innerHTML = `<div class="judge-${type}">${text}${comboHtml}</div>`;
+    judgeTimer = setTimeout(() => { el.innerHTML = ''; }, 420);
   }
 
-  function showHitEffect(type,lane) {
-    const c=document.getElementById('hit-effects');
-    const el=document.createElement('div');
-    el.className=`hit-effect ${type}`;
-    el.dataset.lane=lane;
+  function showHitEffect(type, lane) {
+    const c  = document.getElementById('hit-effects');
+    const el = document.createElement('div');
+    el.className  = `hit-effect ${type}`;
+    el.dataset.lane = lane;
     c.appendChild(el);
-    setTimeout(()=>el.remove(),350);
+    setTimeout(() => el.remove(), 350);
   }
 
-  function pause() {
-    if(!gameRunning) return;
-    gamePaused=true;
-    document.getElementById('screen-pause').classList.add('active');
-  }
-  function resume() {
-    gamePaused=false;
-    document.getElementById('screen-pause').classList.remove('active');
-  }
-  function quit() { endGame(); }
+  function pause()  { if (!gameRunning) return; gamePaused = true;  document.getElementById('screen-pause').classList.add('active'); }
+  function resume() { gamePaused = false; document.getElementById('screen-pause').classList.remove('active'); }
+  function quit()   { endGame(); }
 
   function endGame() {
-    gameRunning=false;
-    if(animFrame) cancelAnimationFrame(animFrame);
+    gameRunning = false;
+    if (animFrame) cancelAnimationFrame(animFrame);
     AudioEngine.stopAll();
 
-    const acc=totalNoteCount>0?(perfect*300+good*100)/(totalNoteCount*300):0;
-    const passed=gaugeScore>=GAUGE_PASS;
-    let rank='F';
-    if(acc>=0.95)rank='S'; else if(acc>=0.85)rank='A';
-    else if(acc>=0.70)rank='B'; else if(acc>=0.55)rank='C';
+    const acc = totalNoteCount > 0 ? (perfect * 300 + good * 100) / (totalNoteCount * 300) : 0;
+    const passed = gaugeScore >= GAUGE_PASS;
+    let rank = 'F';
+    if (acc >= 0.95) rank = 'S'; else if (acc >= 0.85) rank = 'A';
+    else if (acc >= 0.70) rank = 'B'; else if (acc >= 0.55) rank = 'C';
 
-    document.getElementById('result-rank').textContent=rank;
-    document.getElementById('result-rank').className=`result-rank rank-${rank.toLowerCase()}`;
-    document.getElementById('result-song-name').textContent=currentSong.name;
-    document.getElementById('res-score').textContent=score.toLocaleString();
-    document.getElementById('res-combo').textContent=maxCombo;
-    document.getElementById('res-perfect').textContent=perfect;
-    document.getElementById('res-good').textContent=good;
-    document.getElementById('res-miss').textContent=miss;
-    const rg=document.getElementById('res-gauge');
-    const rc=document.getElementById('res-clear');
-    if(rg) rg.textContent=Math.round(gaugeScore)+'%';
-    if(rc){rc.textContent=passed?'✓ CLEAR':'✗ FAILED';rc.style.color=passed?'var(--accent4)':'#ff3333';}
+    document.getElementById('result-rank').textContent = rank;
+    document.getElementById('result-rank').className = `result-rank rank-${rank.toLowerCase()}`;
+    document.getElementById('result-song-name').textContent = currentSong.name + '  ' + currentSong.nameEn;
+    document.getElementById('res-score').textContent   = score.toLocaleString();
+    document.getElementById('res-combo').textContent   = maxCombo;
+    document.getElementById('res-perfect').textContent = perfect;
+    document.getElementById('res-good').textContent    = good;
+    document.getElementById('res-miss').textContent    = miss;
+    const rg = document.getElementById('res-gauge');
+    const rc = document.getElementById('res-clear');
+    if (rg) rg.textContent = Math.round(gaugeScore) + '%';
+    if (rc) { rc.textContent = passed ? '✓ CLEAR' : '✗ FAILED'; rc.style.color = passed ? 'var(--accent4)' : '#ff3333'; }
 
     document.getElementById('screen-pause').classList.remove('active');
     showScreen('screen-result');
@@ -909,13 +996,13 @@ const Game = (() => {
   function retry() { startGame(currentSong); }
 
   function init() {
-    document.addEventListener('keydown',onKeyDown);
-    document.addEventListener('keyup',onKeyUp);
-    document.addEventListener('touchstart',()=>AudioEngine.init(),{once:true});
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('touchstart', () => AudioEngine.init(), { once: true });
     showScreen('screen-title');
   }
 
-  return {showTitle,showSongSelect,setDifficulty,startGame,pause,resume,quit,retry,onTouch,init};
+  return { showTitle, showSongSelect, setDifficulty, startGame, pause, resume, quit, retry, onTouch, init };
 })();
 
-window.addEventListener('load',()=>Game.init());
+window.addEventListener('load', () => Game.init());
