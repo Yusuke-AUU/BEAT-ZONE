@@ -37,29 +37,30 @@ const SONGS = [
   }
 ];
 // ===== DIFFICULTY FILTER =====
-// レーン別に独立フィルタリング → 全難易度で3レーン全部出る
 function filterChart(rawNotes, difficulty) {
-  if (difficulty === 'hard') return rawNotes;
   const byLane = [[], [], []];
   rawNotes.forEach(n => byLane[n.l].push(n));
   const result = [];
+
+  // 難易度別の間引き率
+  // Lane0=KICK, Lane1=SNARE, Lane2=HIHAT
+  const steps = {
+    easy:   [4, 8, 99],  // kick1/4, snare1/8, hihatなし!
+    normal: [2, 4,  8],  // kick半分, snare1/4, hihat1/8
+    hard:   [1, 2,  4],  // kick全部, snare半分, hihat1/4
+  }[difficulty];
+
   byLane.forEach((ln, li) => {
-    // Easy: kick全部, snare半分, hihat1/4
-    // Normal: kick全部, snare全部, hihat半分
-    let step;
-    if (difficulty === 'easy') {
-      step = li === 0 ? 1 : li === 1 ? 2 : 4;
-    } else {
-      step = li === 2 ? 2 : 1;
-    }
-    ln.forEach((n, i) => { if (i % step === 0) result.push(n); });
+    ln.forEach((n, i) => { if (i % steps[li] === 0) result.push(n); });
   });
+
   result.sort((a, b) => a.t - b.t);
-  // 同レーンの最小間隔
+  // 同レーン最小間隔（Easy=かなり広め）
+  const minGap = {easy: 0.6, normal: 0.30, hard: 0.15}[difficulty];
   const clean = [];
   const lastByLane = {0:-999, 1:-999, 2:-999};
   result.forEach(n => {
-    if (n.t - lastByLane[n.l] >= 0.10) {
+    if (n.t - lastByLane[n.l] >= minGap) {
       clean.push(n); lastByLane[n.l] = n.t;
     }
   });
@@ -248,9 +249,9 @@ const Game = (() => {
     document.querySelector('#btn-1 .btn-key').textContent = 'SNARE';
     document.querySelector('#btn-2 .btn-key').textContent = 'HH';
 
-    noteSpeed = { easy: 200, normal: 320, hard: 460 }[currentDiff];
+    noteSpeed = { easy: 160, normal: 280, hard: 420 }[currentDiff];
     judgeWindow = {
-      easy:   { perfect: 0.22, good: 0.40 },
+      easy:   { perfect: 0.30, good: 0.55 },
       normal: { perfect: 0.12, good: 0.22 },
       hard:   { perfect: 0.07, good: 0.13 }
     }[currentDiff];
