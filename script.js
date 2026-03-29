@@ -475,26 +475,25 @@ function generateChart(song, difficulty) {
   const duration = song.duration;
   const beat = 60 / bpm;
 
-  // Note density per beat based on difficulty
-  const density = { easy: 0.6, normal: 1.2, hard: 2.0 }[difficulty];
-  const chanceDouble = { easy: 0, normal: 0.15, hard: 0.35 }[difficulty];
+  const density = { easy: 0.55, normal: 1.1, hard: 1.8 }[difficulty];
 
   const notes = [];
-  let t = beat * 2; // start after 2 beats
+  let t = beat * 2;
 
   const patterns_easy = [
-    [0], [1], [2], [3], [4], [0,2], [1,3], [2,4]
+    [0], [1], [2], [0,2], [1], [0], [2], [1,2], [0,1]
   ];
   const patterns_normal = [
-    [0], [1], [2], [3], [4],
-    [0,2], [1,3], [2,4], [0,4],
-    [0,1,2], [2,3,4]
+    [0], [1], [2],
+    [0,2], [0,1], [1,2],
+    [0], [1], [2], [0,2]
   ];
   const patterns_hard = [
-    [0], [1], [2], [3], [4],
-    [0,1], [1,2], [2,3], [3,4],
-    [0,2,4], [1,3], [0,1,2], [2,3,4],
-    [0,1,2,3], [1,2,3,4]
+    [0], [1], [2],
+    [0,1], [1,2], [0,2],
+    [0,1,2],
+    [0], [2], [1],
+    [0,2], [0,1], [1,2]
   ];
   const patterns = { easy: patterns_easy, normal: patterns_normal, hard: patterns_hard }[difficulty];
 
@@ -508,7 +507,7 @@ function generateChart(song, difficulty) {
     // Avoid repeating same single note
     let finalPattern = pattern;
     if (pattern.length === 1 && pattern[0] === prevLane && Math.random() < 0.7) {
-      const others = [0,1,2,3,4].filter(x => x !== prevLane);
+      const others = [0,1,2].filter(x => x !== prevLane);
       finalPattern = [others[Math.floor(Math.random() * others.length)]];
     }
 
@@ -546,9 +545,9 @@ const Game = (() => {
   let activeNotes = []; // notes currently on screen
   let hitNotes = new Set();
 
-  // Key mappings
-  const KEY_MAP = { 's': 0, 'd': 1, 'z': 2, 'x': 3, 'c': 4 };
-  const keyState = { 0:false, 1:false, 2:false, 3:false, 4:false };
+  // Key mappings - 3 lanes
+  const KEY_MAP = { 'z': 0, 'x': 1, 'c': 2 };
+  const keyState = { 0:false, 1:false, 2:false };
 
   // ===== SCREENS =====
   function showScreen(id) {
@@ -688,9 +687,10 @@ const Game = (() => {
     el.dataset.lane = note.lane;
     el.dataset.id = note.id;
 
-    const laneW = 20; // 20% each
-    el.style.left = (note.lane * laneW) + '%';
-    el.style.width = laneW + '%';
+    const laneW = 33.33; // 33% each for 3 lanes
+    const laneLeft = [0, 33.33, 66.66];
+    el.style.left = laneLeft[note.lane] + '%';
+    el.style.width = (note.lane === 2 ? 33.34 : laneW) + '%';
     el.style.top = '-30px';
 
     pf.appendChild(el);

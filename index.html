@@ -77,8 +77,6 @@
     <div class="lane-dividers">
       <div class="lane-div"></div>
       <div class="lane-div"></div>
-      <div class="lane-div"></div>
-      <div class="lane-div"></div>
     </div>
     <!-- Notes will be injected here -->
     <div id="notes-container"></div>
@@ -93,27 +91,17 @@
 
   <!-- Buttons -->
   <div class="buttons-area" id="buttons-area">
-    <div class="btn-row top-row">
+    <div class="btn-row single-row">
       <button class="note-btn" id="btn-0" data-lane="0"
         ontouchstart="Game.onTouch(0, true)" ontouchend="Game.onTouch(0, false)">
-        <span class="btn-key">S</span>
+        <span class="btn-key">Z</span>
       </button>
       <button class="note-btn" id="btn-1" data-lane="1"
         ontouchstart="Game.onTouch(1, true)" ontouchend="Game.onTouch(1, false)">
-        <span class="btn-key">D</span>
-      </button>
-    </div>
-    <div class="btn-row bottom-row">
-      <button class="note-btn" id="btn-2" data-lane="2"
-        ontouchstart="Game.onTouch(2, true)" ontouchend="Game.onTouch(2, false)">
-        <span class="btn-key">Z</span>
-      </button>
-      <button class="note-btn" id="btn-3" data-lane="3"
-        ontouchstart="Game.onTouch(3, true)" ontouchend="Game.onTouch(3, false)">
         <span class="btn-key">X</span>
       </button>
-      <button class="note-btn" id="btn-4" data-lane="4"
-        ontouchstart="Game.onTouch(4, true)" ontouchend="Game.onTouch(4, false)">
+      <button class="note-btn" id="btn-2" data-lane="2"
+        ontouchstart="Game.onTouch(2, true)" ontouchend="Game.onTouch(2, false)">
         <span class="btn-key">C</span>
       </button>
     </div>
