@@ -648,7 +648,88 @@ body {
 .stat-row span:last-child { font-family: 'Orbitron', sans-serif; color: var(--white); }
 .result-actions { display: flex; flex-wrap: wrap; justify-content: center; }
 
-/* ===== SCROLLBAR ===== */
+/* ===== PERFORMANCE GAUGE ===== */
+.gauge-wrap {
+  width: 100%;
+  max-width: var(--playfield-w);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: rgba(0,0,0,0.4);
+  border-bottom: 1px solid #1a1a2e;
+}
+.gauge-track {
+  flex: 1;
+  height: 12px;
+  background: #111;
+  border-radius: 6px;
+  overflow: visible;
+  position: relative;
+}
+/* Pass threshold marker at 80% */
+.gauge-pass-marker {
+  position: absolute;
+  left: 80%;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: rgba(255,255,255,0.5);
+  z-index: 2;
+}
+.gauge-pass-marker::after {
+  content: 'PASS';
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: rgba(255,255,255,0.4);
+  font-family: 'Orbitron', sans-serif;
+  white-space: nowrap;
+}
+.gauge-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.25s ease, background 0.4s;
+  position: relative;
+}
+.gauge-fill.warn {
+  background: linear-gradient(90deg, #ff6600, #ffe600);
+  box-shadow: 0 0 8px rgba(255,230,0,0.5);
+}
+.gauge-fill.pass {
+  background: linear-gradient(90deg, #00aaff, #00f5ff);
+  box-shadow: 0 0 12px rgba(0,245,255,0.7);
+}
+.gauge-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  width: 44px;
+  text-align: right;
+  color: #aaa;
+  flex-shrink: 0;
+}
+
+/* Lane label hints below playfield */
+.lane-labels {
+  width: 100%;
+  max-width: var(--playfield-w);
+  display: flex;
+  padding: 3px 0;
+  background: rgba(0,0,0,0.6);
+  border-top: 1px solid #111;
+}
+.lane-label {
+  flex: 1;
+  text-align: center;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.lane-label:nth-child(1) { color: var(--accent1); }
+.lane-label:nth-child(2) { color: var(--accent2); }
+.lane-label:nth-child(3) { color: var(--accent3); }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #333; }

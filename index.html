@@ -71,6 +71,15 @@
     <div class="progress-bar" id="progress-bar"></div>
   </div>
 
+  <!-- Performance Gauge -->
+  <div class="gauge-wrap">
+    <div class="gauge-track">
+      <div class="gauge-pass-marker"></div>
+      <div class="gauge-fill warn" id="gauge-fill"></div>
+    </div>
+    <div class="gauge-label" id="gauge-label">0%</div>
+  </div>
+
   <!-- Playfield -->
   <div class="playfield" id="playfield">
     <!-- Lane dividers -->
@@ -88,6 +97,13 @@
 
   <!-- Judge text -->
   <div class="judge-display" id="judge-display"></div>
+
+  <!-- Lane labels -->
+  <div class="lane-labels">
+    <div class="lane-label">🥁 DRUM</div>
+    <div class="lane-label">🎸 BASS</div>
+    <div class="lane-label">🎹 MELODY</div>
+  </div>
 
   <!-- Buttons -->
   <div class="buttons-area" id="buttons-area">
@@ -130,6 +146,8 @@
       <div class="stat-row"><span>PERFECT</span><span id="res-perfect">0</span></div>
       <div class="stat-row"><span>GOOD</span><span id="res-good">0</span></div>
       <div class="stat-row"><span>MISS</span><span id="res-miss">0</span></div>
+      <div class="stat-row"><span>GAUGE</span><span id="res-gauge">0%</span></div>
+      <div class="stat-row"><span>CLEAR</span><span id="res-clear">-</span></div>
     </div>
     <div class="result-actions">
       <button class="btn-menu" onclick="Game.retry()">↺ RETRY</button>
